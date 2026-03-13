@@ -740,7 +740,7 @@ async function claimOtp() {
       document.getElementById('queue-pos').textContent = '📍 Already queued — Position #' + data.position;
       document.getElementById('claim-card').style.display = 'none';
       document.getElementById('panel-waiting-sub').textContent =
-        'You're already in the queue, champ. Go request the OTP — your slot is still valid (' + data.expires_in + 's left).';
+        'Already in the queue, champ. Go request the OTP — your slot is still valid (' + data.expires_in + 's left).';
       showPanel('waiting');
       clearAll();
       startCountdown();
@@ -748,7 +748,7 @@ async function claimOtp() {
     } else {
       document.getElementById('queue-pos').textContent = 'Position #' + data.position + ' in queue';
       document.getElementById('panel-waiting-sub').textContent =
-        'Open the platform and trigger the OTP SMS now. It'll land in your email within seconds. 🚀';
+        'Open the platform and trigger the OTP SMS now. Check your email in seconds. 🚀';
       document.getElementById('claim-card').style.display = 'none';
       showPanel('waiting');
       startCountdown();
