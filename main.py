@@ -248,8 +248,10 @@ async def claim_otp(request: Request):
     # Already queued?
     for i, claim in enumerate(claim_queue):
         if claim["token"] == token:
-            audit("claim_duplicate", token, f"Already at position {i+1}", "warn")
-            return {"status": "already_queued", "position": i + 1, "expires_in": CLAIM_EXPIRY_SEC}
+            age = (datetime.utcnow() - claim["claimed_at"]).total_seconds()
+            expires_in = max(0, int(CLAIM_EXPIRY_SEC - age))
+            audit("claim_duplicate", token, f"Already at position {i+1}, {expires_in}s remaining", "warn")
+            return {"status": "already_queued", "position": i + 1, "expires_in": expires_in}
 
     purge_expired()
 
@@ -324,6 +326,7 @@ async def get_log(limit: int = 200):
 
 @app.get("/admin/queue")
 async def get_queue():
+    purge_expired()
     now = datetime.utcnow()
     return {"queue": [{
         "token":      c["token"],

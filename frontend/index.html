@@ -564,7 +564,7 @@
     <div class="queue-badge" id="queue-pos">Position #1 in queue</div>
     <div class="status-icon blue">📡</div>
     <div class="status-title">Now trigger the OTP</div>
-    <div class="status-sub">Open the platform and request the SMS code.<br>It'll be intercepted and forwarded to your email.</div>
+    <div class="status-sub" id="panel-waiting-sub">Open the platform and request the SMS code.<br>It'll be intercepted and forwarded to your email. 🚀</div>
     <div class="ring-wrap">
       <svg width="96" height="96" viewBox="0 0 96 96">
         <circle class="ring-track" cx="48" cy="48" r="42"/>
@@ -635,6 +635,7 @@
   <div class="admin-card">
     <div class="admin-card-header">
       <span class="section-title">Live Queue</span>
+      <span id="last-refreshed" style="font-size:10px;color:var(--muted);font-family:var(--mono)"></span>
       <button class="btn btn-ghost" id="refresh-queue-btn" onclick="loadAdmin()"><span class="spin">↻</span> Refresh</button>
     </div>
     <div id="queue-list"><div class="empty-msg">// nobody here</div></div>
@@ -729,13 +730,30 @@ async function claimOtp() {
     });
     const data = await res.json();
     if (!res.ok) { showError('Token not recognised', data.detail || 'Check with IT.'); resetBtn(); return; }
+
     currentToken = token;
     expiresIn    = data.expires_in || 300;
-    document.getElementById('queue-pos').textContent = 'Position #' + data.position + ' in queue';
-    document.getElementById('claim-card').style.display = 'none';
-    showPanel('waiting');
-    startCountdown();
-    startPolling();
+
+    if (data.status === 'already_queued') {
+      // User is already in queue — show waiting panel with real remaining time
+      // Don't restart the countdown, just sync to the server's remaining time
+      document.getElementById('queue-pos').textContent = '📍 Already queued — Position #' + data.position;
+      document.getElementById('claim-card').style.display = 'none';
+      document.getElementById('panel-waiting-sub').textContent =
+        'You're already in the queue, champ. Go request the OTP — your slot is still valid (' + data.expires_in + 's left).';
+      showPanel('waiting');
+      clearAll();
+      startCountdown();
+      startPolling();
+    } else {
+      document.getElementById('queue-pos').textContent = 'Position #' + data.position + ' in queue';
+      document.getElementById('panel-waiting-sub').textContent =
+        'Open the platform and trigger the OTP SMS now. It'll land in your email within seconds. 🚀';
+      document.getElementById('claim-card').style.display = 'none';
+      showPanel('waiting');
+      startCountdown();
+      startPolling();
+    }
   } catch(e) {
     showError('Network error', 'Could not reach the server. Is it a Monday?');
     resetBtn();
@@ -805,12 +823,20 @@ function resetForm() {
 }
 
 let adminVisible = false;
+let adminRefreshTimer = null;
+
 function toggleAdmin() {
   adminVisible = !adminVisible;
   document.getElementById('user-view').style.display  = adminVisible ? 'none'  : 'flex';
   document.getElementById('admin-view').style.display = adminVisible ? 'flex'  : 'none';
   document.getElementById('admin-toggle').textContent = adminVisible ? '← Back' : 'Admin';
-  if (adminVisible) loadAdmin();
+  if (adminVisible) {
+    loadAdmin();
+    adminRefreshTimer = setInterval(loadAdmin, 15000);
+  } else {
+    clearInterval(adminRefreshTimer);
+    adminRefreshTimer = null;
+  }
 }
 
 // ── Log filter state ──────────────────────────────────────────────────────────
@@ -885,6 +911,8 @@ async function loadAdmin() {
     document.getElementById('s-total').textContent = log.total;
     document.getElementById('s-queue').textContent = queue.queue.length;
     document.getElementById('s-users').textContent = users.count;
+    const refreshEl = document.getElementById('last-refreshed');
+    if (refreshEl) refreshEl.textContent = 'refreshed ' + new Date().toLocaleTimeString();
 
     const ql = document.getElementById('queue-list');
     ql.innerHTML = queue.queue.length === 0
@@ -899,7 +927,7 @@ async function loadAdmin() {
               </div>
             </div>
             <div style="text-align:right">
-              <div style="color:var(--muted);font-size:10px;font-family:var(--mono)">${c.claimed_at.slice(11,19)} UTC</div>
+              <div style="color:var(--muted);font-size:10px;font-family:var(--mono)">${fmtTime(c.claimed_at)}</div>
               <div style="color:var(--warn);font-size:10px;font-family:var(--mono)">exp in ${c.expires_in}s</div>
             </div>
           </div>`).join('');
