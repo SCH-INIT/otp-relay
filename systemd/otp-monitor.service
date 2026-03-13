@@ -5,7 +5,7 @@ Wants=otp-relay.service
 
 [Service]
 Type=simple
-User=otprelay
+User=root
 WorkingDirectory=/opt/otp-relay
 EnvironmentFile=/opt/otp-relay/.env
 ExecStart=/opt/otp-relay/venv/bin/python3 monitor.py
@@ -14,8 +14,6 @@ RestartSec=10
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/opt/otp-relay/data
-AmbientCapabilities=CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target
