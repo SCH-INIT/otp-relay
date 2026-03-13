@@ -85,7 +85,7 @@ fi
 section "6/7  Permissions"
 chown -R root:root "$INSTALL_DIR"
 chmod -R 755 "$INSTALL_DIR"
-find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
+find "$INSTALL_DIR" -type f -not -path "$INSTALL_DIR/venv/*" -exec chmod 644 {} \;
 chmod +x "$INSTALL_DIR/deploy_users.sh"
 chmod +x "$INSTALL_DIR/test_otp_relay.py"
 chmod +x "$INSTALL_DIR/install.sh"

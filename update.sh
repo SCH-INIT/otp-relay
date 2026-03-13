@@ -32,27 +32,29 @@ git pull origin main
 ok "Code updated"
 
 info "Updating Python packages..."
-"$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv
+"$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv requests
 ok "Packages updated"
 
 # Fix permissions on any new scripts
-chmod +x "$INSTALL_DIR/deploy_users.sh"  2>/dev/null || true
+chmod +x "$INSTALL_DIR/deploy_users.sh"   2>/dev/null || true
 chmod +x "$INSTALL_DIR/test_otp_relay.py" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/install.sh"        2>/dev/null || true
 chmod +x "$INSTALL_DIR/update.sh"         2>/dev/null || true
+chmod +x "$INSTALL_DIR/monitor.py"        2>/dev/null || true
 
 if $RESTART; then
-  info "Restarting service..."
+  info "Restarting services..."
   systemctl restart otp-relay
   sleep 2
   if systemctl is-active --quiet otp-relay; then
     ok "otp-relay restarted successfully"
   else
-    fail "Service failed to restart — check: sudo journalctl -u otp-relay -n 30"
+    fail "otp-relay failed to restart — check: sudo journalctl -u otp-relay -n 30"
     exit 1
   fi
+  systemctl restart otp-monitor 2>/dev/null && ok "otp-monitor restarted successfully" || warn "otp-monitor not running (not yet configured?)"
 else
-  warn "Skipped restart (--no-restart). Run: sudo systemctl restart otp-relay"
+  warn "Skipped restart (--no-restart). Run: sudo systemctl restart otp-relay otp-monitor"
 fi
 
 echo ""
