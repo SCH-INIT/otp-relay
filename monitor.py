@@ -188,9 +188,11 @@ def tail_audit_log():
 # ── Phone watcher ─────────────────────────────────────────────────────────────
 
 def ping(ip: str) -> bool:
-    """Returns True if host responds to a single ping within 3 seconds."""
+    """Returns True if host responds to at least one of 3 pings within 5 seconds.
+    iPhones enter a low-power WiFi state between checks and may miss a single
+    ping but reliably respond to at least one out of three."""
     result = subprocess.run(
-        ["ping", "-c", "1", "-W", "3", ip],
+        ["ping", "-c", "3", "-W", "5", "-i", "0.5", ip],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -228,7 +230,8 @@ def watch_phone():
             logger.info(f"Ping failed ({consecutive_failures}/{PHONE_OFFLINE_THRESHOLD})")
 
             if consecutive_failures >= PHONE_OFFLINE_THRESHOLD and phone_online:
-                phone_online = False
+                phone_online         = False
+                consecutive_failures = 0  # reset so counter stays clean
                 audit("phone_offline",
                       f"iPhone {PHONE_IP} unreachable after "
                       f"{PHONE_OFFLINE_THRESHOLD} consecutive pings",
