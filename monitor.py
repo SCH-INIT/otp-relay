@@ -191,13 +191,20 @@ def tail_audit_log():
 def ping(ip: str) -> bool:
     """Uses arping (layer 2 ARP) instead of ICMP ping.
     iOS responds reliably to ARP even in low-power WiFi sleep state,
-    whereas ICMP ping is frequently filtered by iOS power management."""
-    result = subprocess.run(
-        ["arping", "-c", "3", "-I", PHONE_INTERFACE, ip],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return result.returncode == 0
+    whereas ICMP ping is frequently filtered by iOS power management.
+    -w 1 sets a hard 1-second deadline so arping never hangs if the
+    interface is temporarily down."""
+    try:
+        result = subprocess.run(
+            ["arping", "-c", "2", "-w", "1", "-I", PHONE_INTERFACE, ip],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception as e:
+        logger.error(f"arping execution error: {e}")
+        return False
 
 
 def watch_phone():
@@ -217,29 +224,27 @@ def watch_phone():
     time.sleep(30)
 
     while True:
-        reachable = ping(PHONE_IP)
-
-        if reachable:
+        if ping(PHONE_IP):
             if not phone_online:
-                # Recovery
                 phone_online         = True
                 consecutive_failures = 0
                 audit("phone_online",
                       f"iPhone {PHONE_IP} is reachable again",
-                      "error")   # error level so it passes through the same filter
+                      "error")
                 logger.info(f"Phone {PHONE_IP} back online")
             else:
                 consecutive_failures = 0
         else:
             consecutive_failures += 1
-            logger.info(f"Ping failed ({consecutive_failures}/{PHONE_OFFLINE_THRESHOLD})")
+            # Only log up to the threshold — no point spamming after offline declared
+            if consecutive_failures <= PHONE_OFFLINE_THRESHOLD:
+                logger.info(f"ARP failed ({consecutive_failures}/{PHONE_OFFLINE_THRESHOLD})")
 
-            if consecutive_failures >= PHONE_OFFLINE_THRESHOLD and phone_online:
-                phone_online         = False
-                consecutive_failures = 0  # reset so counter stays clean
+            if phone_online and consecutive_failures >= PHONE_OFFLINE_THRESHOLD:
+                phone_online = False
                 audit("phone_offline",
                       f"iPhone {PHONE_IP} unreachable after "
-                      f"{PHONE_OFFLINE_THRESHOLD} consecutive pings",
+                      f"{PHONE_OFFLINE_THRESHOLD} consecutive ARP checks",
                       "error")
                 logger.error(f"Phone {PHONE_IP} declared offline")
 
