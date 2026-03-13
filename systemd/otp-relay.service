@@ -1,0 +1,19 @@
+[Unit]
+Description=OTP Relay Server
+After=network.target
+
+[Service]
+Type=simple
+User=otprelay
+WorkingDirectory=/opt/otp-relay
+EnvironmentFile=/opt/otp-relay/.env
+ExecStart=/opt/otp-relay/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/otp-relay/data
+
+[Install]
+WantedBy=multi-user.target
