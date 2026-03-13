@@ -61,10 +61,10 @@ ok "data/ directory ready"
 section "4/7  Python virtual environment"
 if [[ ! -f "$INSTALL_DIR/venv/bin/uvicorn" ]]; then
   python3.12 -m venv "$INSTALL_DIR/venv"
-  "$INSTALL_DIR/venv/bin/pip" install -q fastapi uvicorn openpyxl python-dotenv
+  "$INSTALL_DIR/venv/bin/pip" install -q fastapi uvicorn openpyxl python-dotenv requests
   ok "venv created and packages installed"
 else
-  "$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv
+  "$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv requests
   ok "venv already exists — packages updated"
 fi
 
@@ -90,6 +90,7 @@ chmod +x "$INSTALL_DIR/deploy_users.sh"
 chmod +x "$INSTALL_DIR/test_otp_relay.py"
 chmod +x "$INSTALL_DIR/install.sh"
 chmod +x "$INSTALL_DIR/update.sh"
+chmod +x "$INSTALL_DIR/monitor.py"
 chown root:otprelay "$INSTALL_DIR/.env"
 chmod 640 "$INSTALL_DIR/.env"
 chown -R otprelay:otprelay "$INSTALL_DIR/data"
@@ -122,9 +123,11 @@ ln -sf /etc/nginx/sites-available/otp-relay /etc/nginx/sites-enabled/otp-relay
 nginx -t 2>/dev/null && systemctl enable nginx --now && systemctl reload nginx
 ok "nginx configured and reloaded"
 
-cp "$INSTALL_DIR/systemd/otp-relay.service" /etc/systemd/system/otp-relay.service
+cp "$INSTALL_DIR/systemd/otp-relay.service"   /etc/systemd/system/otp-relay.service
+cp "$INSTALL_DIR/systemd/otp-monitor.service" /etc/systemd/system/otp-monitor.service
 systemctl daemon-reload
 systemctl enable otp-relay
+systemctl enable otp-monitor
 
 if [[ -f "$INSTALL_DIR/.env" ]] && ! grep -q "replace-with" "$INSTALL_DIR/.env"; then
   systemctl restart otp-relay
@@ -132,12 +135,20 @@ if [[ -f "$INSTALL_DIR/.env" ]] && ! grep -q "replace-with" "$INSTALL_DIR/.env";
   if systemctl is-active --quiet otp-relay; then
     ok "otp-relay service started"
   else
-    fail "Service failed to start — check: sudo journalctl -u otp-relay -n 30"
+    fail "otp-relay failed to start — check: sudo journalctl -u otp-relay -n 30"
+  fi
+  systemctl restart otp-monitor
+  sleep 2
+  if systemctl is-active --quiet otp-monitor; then
+    ok "otp-monitor service started"
+  else
+    fail "otp-monitor failed to start — check: sudo journalctl -u otp-monitor -n 30"
   fi
 else
-  warn "Service NOT started — finish editing .env first:"
+  warn "Services NOT started — finish editing .env first:"
   warn "  sudo nano $INSTALL_DIR/.env"
   warn "  sudo systemctl start otp-relay"
+  warn "  sudo systemctl start otp-monitor"
 fi
 
 ufw allow 80/tcp  >/dev/null 2>&1 || true
@@ -153,6 +164,7 @@ echo -e "  Portal:   ${CYAN}https://srvotp26.init-db.lan${RESET}"
 echo -e "  Config:   sudo nano $INSTALL_DIR/.env"
 echo -e "  Users:    sudo bash $INSTALL_DIR/deploy_users.sh"
 echo -e "  Logs:     sudo journalctl -u otp-relay -f"
+echo -e "  Monitor:  sudo journalctl -u otp-monitor -f"
 echo -e "  Test:     python3 $INSTALL_DIR/test_otp_relay.py"
 echo -e "  Update:   sudo bash $INSTALL_DIR/update.sh"
 echo ""
