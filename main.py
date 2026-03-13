@@ -35,6 +35,7 @@ SMTP_PORT        = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER        = os.getenv("SMTP_USER", "otp-relay@company.com")
 SMTP_PASSWORD    = os.getenv("SMTP_PASSWORD", "")
 SMTP_USE_TLS     = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+SMTP_AUTH        = os.getenv("SMTP_AUTH", "true").lower() == "true"
 FROM_EMAIL       = os.getenv("FROM_EMAIL", SMTP_USER)
 FROM_NAME        = os.getenv("FROM_NAME", "OTP Relay")
 
@@ -216,7 +217,7 @@ def send_email(to_email: str, name: str, sms_body: str, otp: str):
     else:
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
 
-    if SMTP_PASSWORD:
+    if SMTP_AUTH:
         server.login(SMTP_USER, SMTP_PASSWORD)
 
     server.sendmail(FROM_EMAIL, to_email, msg.as_string())
