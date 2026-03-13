@@ -673,7 +673,7 @@
     <div style="overflow-x:auto">
       <table class="log-table">
         <thead>
-          <tr><th>Time (UTC)</th><th>Event</th><th>Token</th><th>Detail</th><th>Status</th></tr>
+          <tr><th>Time (local)</th><th>Event</th><th>Token</th><th>Detail</th><th>Status</th></tr>
         </thead>
         <tbody id="log-body">
           <tr><td colspan="5" class="empty-msg">Loading…</td></tr>
@@ -848,7 +848,7 @@ function applyFilters() {
     ? '<tr><td colspan="5" class="empty-msg">// nothing matches — try loosening the filters</td></tr>'
     : filtered.map(e => `
         <tr>
-          <td>${e.ts.replace('T',' ')}</td>
+          <td>${fmtTime(e.ts)}</td>
           <td>${e.event}</td>
           <td>${e.token || '—'}</td>
           <td style="max-width:320px;word-break:break-word;color:var(--muted)">${e.detail}</td>
@@ -925,6 +925,20 @@ async function loadAdmin() {
       if (el) el.classList.remove('loading');
     });
   }
+}
+
+function fmtTime(utcStr) {
+  // Parse the UTC ISO string and format in the browser's local timezone
+  const d = new Date(utcStr);
+  return d.toLocaleString(undefined, {
+    year:   'numeric',
+    month:  '2-digit',
+    day:    '2-digit',
+    hour:   '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
 }
 </script>
 </body>
