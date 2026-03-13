@@ -216,11 +216,19 @@ def watch_phone():
                 f"interval {PHONE_PING_INTERVAL}s, "
                 f"threshold {PHONE_OFFLINE_THRESHOLD} missed pings")
 
+    # Verify the network interface exists before starting
+    if not os.path.exists(f"/sys/class/net/{PHONE_INTERFACE}"):
+        logger.critical(f"Network interface {PHONE_INTERFACE} not found — phone watcher disabled")
+        audit("monitor_error",
+              f"Interface {PHONE_INTERFACE} not found — check PHONE_INTERFACE in .env",
+              "error")
+        return
+
     consecutive_failures = 0
     phone_online         = True   # assume online at startup
 
-    # Short delay before the first ping — avoids false failures immediately
-    # after service start when the network stack may not be fully ready.
+    # Short delay before the first check — lets the network stack settle
+    # after service start and avoids a false offline on boot.
     time.sleep(30)
 
     while True:
