@@ -211,6 +211,10 @@ def watch_phone():
     consecutive_failures = 0
     phone_online         = True   # assume online at startup
 
+    # Short delay before the first ping — avoids false failures immediately
+    # after service start when the network stack may not be fully ready.
+    time.sleep(30)
+
     while True:
         reachable = ping(PHONE_IP)
 
