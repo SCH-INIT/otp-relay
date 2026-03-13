@@ -35,7 +35,7 @@ echo -e "${DIM}srvotp26.init-db.lan · Ubuntu 24.04 · Exchange SMTP${RESET}\n"
 
 section "1/7  System packages"
 apt-get update -qq
-apt-get install -y -qq python3.12 python3.12-venv python3-pip nginx openssl
+apt-get install -y -qq python3.12 python3.12-venv python3-pip nginx openssl arping
 ok "Packages installed"
 
 # ── 2. Service account ────────────────────────────────────────────────────────

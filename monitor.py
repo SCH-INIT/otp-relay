@@ -32,6 +32,7 @@ PHONE_IP              = os.getenv("PHONE_IP",              "")
 PHONE_PING_INTERVAL   = int(os.getenv("PHONE_PING_INTERVAL",  "300"))
 PHONE_OFFLINE_THRESHOLD = int(os.getenv("PHONE_OFFLINE_THRESHOLD", "2"))
 PORTAL_URL            = os.getenv("PORTAL_URL",            "https://srvotp26.init-db.lan")
+PHONE_INTERFACE       = os.getenv("PHONE_INTERFACE",       "ens33")
 BATCH_WINDOW_SEC      = int(os.getenv("BATCH_WINDOW_SEC",  "10"))
 
 LEVEL_ORDER = {"info": 0, "warn": 1, "error": 2}
@@ -188,11 +189,11 @@ def tail_audit_log():
 # ── Phone watcher ─────────────────────────────────────────────────────────────
 
 def ping(ip: str) -> bool:
-    """Returns True if host responds to at least one of 3 pings within 5 seconds.
-    iPhones enter a low-power WiFi state between checks and may miss a single
-    ping but reliably respond to at least one out of three."""
+    """Uses arping (layer 2 ARP) instead of ICMP ping.
+    iOS responds reliably to ARP even in low-power WiFi sleep state,
+    whereas ICMP ping is frequently filtered by iOS power management."""
     result = subprocess.run(
-        ["ping", "-c", "3", "-W", "5", "-i", "0.5", ip],
+        ["arping", "-c", "3", "-I", PHONE_INTERFACE, ip],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
