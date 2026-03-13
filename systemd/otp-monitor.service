@@ -11,10 +11,11 @@ EnvironmentFile=/opt/otp-relay/.env
 ExecStart=/opt/otp-relay/venv/bin/python3 monitor.py
 Restart=always
 RestartSec=10
-NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/opt/otp-relay/data
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target
