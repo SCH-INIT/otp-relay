@@ -226,6 +226,14 @@ def send_email(to_email: str, name: str, sms_body: str, otp: str):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+async def background_purge():
+    """Runs every 60 seconds to expire stale queue entries on time,
+    regardless of whether any requests are coming in."""
+    while True:
+        await asyncio.sleep(60)
+        purge_expired()
+
+
 @app.on_event("startup")
 async def startup():
     if os.path.exists(USERS_EXCEL_PATH):
@@ -234,6 +242,7 @@ async def startup():
     else:
         logger.warning(f"users.xlsx not found at {USERS_EXCEL_PATH}")
         audit("server_start", detail="No users.xlsx — POST /admin/reload-users after adding it", status="warn")
+    asyncio.create_task(background_purge())
 
 
 @app.post("/claim-otp")
@@ -248,10 +257,8 @@ async def claim_otp(request: Request):
     # Already queued?
     for i, claim in enumerate(claim_queue):
         if claim["token"] == token:
-            age = (datetime.utcnow() - claim["claimed_at"]).total_seconds()
-            expires_in = max(0, int(CLAIM_EXPIRY_SEC - age))
-            audit("claim_duplicate", token, f"Already at position {i+1}, {expires_in}s remaining", "warn")
-            return {"status": "already_queued", "position": i + 1, "expires_in": expires_in}
+            audit("claim_duplicate", token, f"Already at position {i+1}", "warn")
+            return {"status": "already_queued", "position": i + 1, "expires_in": CLAIM_EXPIRY_SEC}
 
     purge_expired()
 
@@ -326,7 +333,6 @@ async def get_log(limit: int = 200):
 
 @app.get("/admin/queue")
 async def get_queue():
-    purge_expired()
     now = datetime.utcnow()
     return {"queue": [{
         "token":      c["token"],
