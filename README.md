@@ -23,6 +23,8 @@ User's inbox
 5. Server pops the first person in queue and emails them the OTP via Exchange
 6. Portal auto-confirms delivery. Every step is written to `data/audit.log`.
 
+A second service (`otp-monitor`) runs alongside the main app. It pings the iPhone every few minutes using ARP and tails the audit log in real time, forwarding error-level events to an IT contact via WhatsApp.
+
 ---
 
 ## Repository Structure
@@ -30,8 +32,9 @@ User's inbox
 ```
 otp-relay/
 ├── main.py                  # FastAPI application
+├── monitor.py               # Phone watcher + WhatsApp alert forwarder
 ├── install.sh               # Fresh install from this repo
-├── update.sh                # git pull + restart (--no-restart flag available)
+├── update.sh                # git pull + sync systemd units + restart
 ├── deploy_users.sh          # Hot-reload users.xlsx without restarting
 ├── test_otp_relay.py        # End-to-end test suite
 ├── .env.template            # Config template — copy to .env and fill in
@@ -44,7 +47,8 @@ otp-relay/
 ├── scripts/
 │   └── generate_sample_users.py
 └── systemd/
-    └── otp-relay.service    # systemd unit file
+    ├── otp-relay.service    # Main app systemd unit
+    └── otp-monitor.service  # Monitor systemd unit
 ```
 
 > `.env`, `venv/`, and `data/` are intentionally excluded from git.
@@ -58,6 +62,7 @@ otp-relay/
 | Server hostname | `srvotp26.init-db.lan` |
 | Portal URL | `https://srvotp26.init-db.lan` |
 | Service user | `otprelay` (system account, no login) |
+| Monitor user | `root` (required for ARP raw socket access) |
 | App directory | `/opt/otp-relay/` |
 | Data directory | `/opt/otp-relay/data/` |
 | Audit log | `/opt/otp-relay/data/audit.log` |
@@ -66,7 +71,7 @@ otp-relay/
 | TLS certificate | `/etc/ssl/otp-relay/server.crt` |
 | TLS key | `/etc/ssl/otp-relay/server.key` |
 | nginx config | `/etc/nginx/sites-available/otp-relay` |
-| systemd unit | `/etc/systemd/system/otp-relay.service` |
+| systemd units | `/etc/systemd/system/otp-relay.service`, `otp-monitor.service` |
 | Environment config | `/opt/otp-relay/.env` (not in git) |
 
 ---
@@ -76,6 +81,7 @@ otp-relay/
 ```
 /opt/otp-relay/                  root:root         755
 ├── main.py                      root:root         644
+├── monitor.py                   root:root         755
 ├── install.sh                   root:root         755
 ├── update.sh                    root:root         755
 ├── deploy_users.sh              root:root         755
@@ -87,7 +93,8 @@ otp-relay/
 ├── nginx/
 │   └── otp-relay.conf           root:root         644
 ├── systemd/
-│   └── otp-relay.service        root:root         644
+│   ├── otp-relay.service        root:root         644
+│   └── otp-monitor.service      root:root         644
 ├── venv/                        root:root         755  (not in git)
 └── data/                        otprelay:otprelay 700  (not in git)
     ├── users.xlsx               otprelay:otprelay 600
@@ -107,7 +114,7 @@ cd /opt/otp-relay
 sudo bash install.sh
 ```
 
-`install.sh` creates the venv, sets permissions, generates the TLS cert, configures nginx and systemd — all in one shot. It will not overwrite an existing `.env`.
+`install.sh` creates the venv, sets permissions, generates the TLS cert, configures nginx and both systemd services — all in one shot. It will not overwrite an existing `.env`.
 
 ### After running the installer
 
@@ -123,15 +130,21 @@ Key values to fill in:
 |---|---|
 | `SMS_SECRET_TOKEN` | Generate: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `SMTP_HOST` | Exchange server hostname |
-| `SMTP_PORT` | `587` (STARTTLS) or `25` |
+| `SMTP_PORT` | `25` for anonymous relay (recommended), `587` for STARTTLS with auth |
+| `SMTP_AUTH` | `false` for anonymous relay on port 25, `true` for authenticated SMTP |
 | `SMTP_USER` | Full UPN format: `otp-relay@init-db.lan` |
-| `SMTP_PASSWORD` | Mailbox password |
+| `SMTP_PASSWORD` | Leave empty if using anonymous relay (`SMTP_AUTH=false`) |
+| `WHATSAPP_API_KEY` | From CallMeBot registration (see Monitor & Alerts section) |
+| `WHATSAPP_RECIPIENT` | IT contact's number in full international format: `+971501234567` |
+| `PHONE_IP` | Static IP of the company iPhone — ask IT to set a DHCP reservation |
+| `PHONE_INTERFACE` | Network interface name — check with `ip link` (typically `ens33`) |
 
-Then start the service:
+Then start the services:
 
 ```bash
 sudo systemctl start otp-relay
-sudo systemctl status otp-relay
+sudo systemctl start otp-monitor
+sudo systemctl status otp-relay otp-monitor
 ```
 
 Deploy the user list (place `otp-relay-users.xlsx` in your home directory first):
@@ -145,9 +158,40 @@ sudo bash /opt/otp-relay/deploy_users.sh
 ## Updating
 
 ```bash
-sudo bash /opt/otp-relay/update.sh            # pull latest + restart
+sudo bash /opt/otp-relay/update.sh            # pull latest + sync units + restart both services
 sudo bash /opt/otp-relay/update.sh --no-restart  # pull only
 ```
+
+`update.sh` automatically detects changes to systemd unit files and re-copies them to `/etc/systemd/system/`, so unit changes deploy without any manual steps.
+
+---
+
+## Monitor & Alerts
+
+`monitor.py` runs as the `otp-monitor` systemd service and does two things in parallel:
+
+**Phone watcher** — sends ARP requests to the iPhone every `PHONE_PING_INTERVAL` seconds. ARP is used instead of ICMP ping because iOS filters ping in low-power state but must respond to ARP to maintain network presence. If `PHONE_OFFLINE_THRESHOLD` consecutive checks fail, a `phone_offline` event is written to the audit log and a WhatsApp alert is sent. Recovery is detected and alerted the same way.
+
+**Log forwarder** — tails the audit log in real time. Any entry at or above `ALERT_LEVEL` is forwarded to the IT contact via WhatsApp (CallMeBot). Multiple events arriving within `BATCH_WINDOW_SEC` are grouped into a single message to avoid flooding.
+
+### CallMeBot registration (one time per recipient)
+
+1. Add `+34 644 64 90 27` to WhatsApp contacts as "CallMeBot"
+2. Send this exact message to that number on WhatsApp: `I allow callmebot to send me messages`
+3. You will receive an API key within a few minutes
+4. Add it to `.env` as `WHATSAPP_API_KEY`
+
+### Alert level
+
+`ALERT_LEVEL` in `.env` controls the minimum severity that triggers a WhatsApp message:
+
+| Value | What gets sent |
+|---|---|
+| `error` | Errors only — default, recommended for normal operation |
+| `warn` | Warnings and errors — useful when troubleshooting |
+| `info` | Everything — use only for active debugging sessions |
+
+Change it in `.env` and restart `otp-monitor` to apply. No code changes needed.
 
 ---
 
@@ -169,7 +213,7 @@ sudo bash /opt/otp-relay/update.sh --no-restart  # pull only
 - URL: `https://srvotp26.init-db.lan/sms-received`
 - Method: **POST**
 - Headers:
-  - `X-Secret-Token` : *(paste value from SMS_SECRET_TOKEN in .env — no quotes, no $ substitution)*
+  - `X-Secret-Token` : *(paste value from SMS_SECRET_TOKEN in .env — no quotes)*
   - `Content-Type` : `application/json`
 - Request Body: **JSON**
   - Key: `body` → Value: output of Get Text from Input
@@ -180,6 +224,14 @@ sudo bash /opt/otp-relay/update.sh --no-restart  # pull only
 4. Tap **Done**
 
 > If the Shortcut stops firing after an iOS update, check that **Run Immediately** is still ON — iOS sometimes resets this.
+
+### Troubleshooting the Shortcut
+
+If the Shortcut fires but you see no `sms_received` event in the log, the most common causes are:
+
+- iPhone dropped off the company WiFi — check Settings → WiFi, reconnect if needed. DNS for `.lan` only resolves on the internal network.
+- The secret token in the Shortcut header doesn't match `SMS_SECRET_TOKEN` in `.env` — look for `sms_rejected` in the audit log.
+- iOS cached stale DNS — toggle WiFi off and back on to flush.
 
 ### Trust the self-signed certificate on iPhone
 
@@ -238,7 +290,16 @@ curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
 
 Expected: `{"status": "ok", "sent_to": "otp-relay@init-db.lan"}`
 
-Exchange requires the full UPN format:
+This installation uses anonymous relay on port 25 — the Exchange connector trusts the server's internal IP without requiring credentials:
+
+```
+SMTP_PORT=25
+SMTP_AUTH=false
+SMTP_USE_TLS=false
+SMTP_PASSWORD=          (leave empty)
+```
+
+If you ever need authenticated SMTP (port 587), Exchange requires the full UPN format:
 ```
 SMTP_USER=otp-relay@init-db.lan   ✓  correct
 SMTP_USER=INIT-DB\otp-relay       ✗  does not work
@@ -249,11 +310,9 @@ SMTP_USER=otp-relay               ✗  does not work
 
 ## Simulate an SMS (for testing without the iPhone)
 
-If the Shortcut isn't firing, you can inject an SMS manually:
-
 ```bash
 # 1. First, claim a slot in the portal as normal
-# 2. Then run this — paste the token literally, do not use $(...) substitution
+# 2. Then inject a fake SMS — paste the token value literally
 curl -sk -X POST https://srvotp26.init-db.lan/sms-received \
   -H "Content-Type: application/json" \
   -H "X-Secret-Token: PASTE_TOKEN_LITERALLY_HERE" \
@@ -272,7 +331,7 @@ Every event is appended to `/opt/otp-relay/data/audit.log` (one JSON object per 
 | `import_complete` | info/warn | Excel load finished — warn if any rows skipped |
 | `import_skipped` | warn | A row was skipped — detail gives row number and reason |
 | `claim_queued` | info | User joined the queue |
-| `claim_duplicate` | warn | User clicked twice — second click ignored |
+| `claim_duplicate` | warn | User clicked twice — second click ignored, remaining time shown |
 | `claim_rejected` | error | Unknown token submitted |
 | `claim_expired` | warn | 5 min passed with no SMS — user removed from queue |
 | `sms_received` | info | iPhone Shortcut fired successfully |
@@ -281,12 +340,23 @@ Every event is appended to `/opt/otp-relay/data/audit.log` (one JSON object per 
 | `otp_delivered` | info | Email sent successfully via Exchange |
 | `otp_delivery_failed` | error | SMTP error — user automatically re-queued |
 | `users_reloaded` | info | User list reloaded from Excel |
+| `monitor_start` | info | Monitor service started |
+| `monitor_error` | error | Monitor configuration error (e.g. network interface not found) |
+| `phone_offline` | error | iPhone unreachable after consecutive ARP failures — WhatsApp alert sent |
+| `phone_online` | error | iPhone reachable again after offline period — WhatsApp alert sent |
 
-View in browser: `https://srvotp26.init-db.lan` → click **Admin ↗**
+> `phone_offline` and `phone_online` use `error` status so they pass through the alert filter at default `ALERT_LEVEL=error`.
+
+> OTP values are never stored in the log. Only metadata is recorded.
+
+View in browser: `https://srvotp26.init-db.lan` → click **Admin**
 
 ```bash
 # Live service log
 sudo journalctl -u otp-relay -f
+
+# Live monitor log
+sudo journalctl -u otp-monitor -f
 
 # Last 50 audit entries
 tail -50 /opt/otp-relay/data/audit.log | python3 -m json.tool
@@ -298,8 +368,6 @@ grep -E '"status": "(warn|error)"' /opt/otp-relay/data/audit.log
 grep import_skipped /opt/otp-relay/data/audit.log
 ```
 
-> OTP values are never stored in the log. Only metadata is recorded.
-
 ---
 
 ## Day-to-Day Operations
@@ -307,9 +375,11 @@ grep import_skipped /opt/otp-relay/data/audit.log
 ```bash
 # Service status
 sudo systemctl status otp-relay
+sudo systemctl status otp-monitor
 
 # Restart after config change
 sudo systemctl restart otp-relay
+sudo systemctl restart otp-monitor
 
 # Update from git
 sudo bash /opt/otp-relay/update.sh
@@ -338,7 +408,7 @@ curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
 >
 > 1. Go to `https://srvotp26.init-db.lan`
 > 2. Enter your **2 or 3 character token** (ask IT if you don't have one)
-> 3. Click **"I'm about to request my OTP"**
+> 3. Click **"Claim my slot"**
 > 4. Immediately open the platform and trigger the OTP/SMS code
 > 5. The code will arrive in your email inbox within seconds
 > 6. The page confirms automatically once it has been sent
