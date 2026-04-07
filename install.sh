@@ -121,7 +121,7 @@ if [[ ! -f /etc/ssl/otp-relay/server.crt ]]; then
   openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
     -keyout /etc/ssl/otp-relay/server.key \
     -out    /etc/ssl/otp-relay/server.crt \
-    -subj   "/C=AE/O=Company/CN=${SERVER_HOSTNAME}" \
+    -subj   "/C=AE/O=INIT/CN=${SERVER_HOSTNAME}" \
     -addext "subjectAltName=DNS:${SERVER_HOSTNAME},IP:${SERVER_IP}" \
     2>/dev/null
   chmod 600 /etc/ssl/otp-relay/server.key
