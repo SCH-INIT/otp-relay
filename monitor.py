@@ -31,7 +31,13 @@ ALERT_LEVEL           = os.getenv("ALERT_LEVEL",           "error").lower()
 PHONE_IP              = os.getenv("PHONE_IP",              "")
 PHONE_PING_INTERVAL   = int(os.getenv("PHONE_PING_INTERVAL",  "300"))
 PHONE_OFFLINE_THRESHOLD = int(os.getenv("PHONE_OFFLINE_THRESHOLD", "2"))
-PORTAL_URL            = os.getenv("PORTAL_URL",            "https://srvotp26.init-db.lan")
+_server_hostname = os.getenv("SERVER_HOSTNAME", "")
+_server_ip       = os.getenv("SERVER_IP",       "")
+PORTAL_URL       = (
+    f"https://{_server_hostname}" if _server_hostname else
+    f"https://{_server_ip}"       if _server_ip       else
+    "https://srvotp26.init-db.lan"
+)
 PHONE_INTERFACE       = os.getenv("PHONE_INTERFACE",       "ens33")
 BATCH_WINDOW_SEC      = int(os.getenv("BATCH_WINDOW_SEC",  "10"))
 

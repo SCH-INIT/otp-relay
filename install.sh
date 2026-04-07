@@ -29,7 +29,7 @@ INSTALL_DIR="/opt/otp-relay"
 }
 
 echo -e "\n${BOLD}OTP Relay — Install${RESET}"
-echo -e "${DIM}srvotp26.init-db.lan · Ubuntu 24.04 · Exchange SMTP${RESET}\n"
+echo -e "${DIM}Ubuntu 24.04 · Exchange SMTP${RESET}\n"
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 
@@ -82,6 +82,19 @@ fi
 
 # ── 6. Permissions ────────────────────────────────────────────────────────────
 
+# ── Load server config from .env ─────────────────────────────────────────────
+# Source .env to get SERVER_HOSTNAME and SERVER_IP for cert and nginx generation.
+# Fall back to placeholders if .env not yet configured.
+if [[ -f "$INSTALL_DIR/.env" ]]; then
+  set +u  # allow unset variables while sourcing
+  # shellcheck disable=SC1090
+  source <(grep -E "^(SERVER_HOSTNAME|SERVER_IP)=" "$INSTALL_DIR/.env" | sed 's/ *= */=/;s/[[:space:]]*#.*//')
+  set -u
+fi
+SERVER_HOSTNAME="${SERVER_HOSTNAME:-srvotp26.company.lan}"
+SERVER_IP="${SERVER_IP:-127.0.0.1}"
+PORTAL_URL="https://${SERVER_HOSTNAME}"
+
 section "6/7  Permissions"
 chown -R root:root "$INSTALL_DIR"
 chmod -R 755 "$INSTALL_DIR"
@@ -108,17 +121,21 @@ if [[ ! -f /etc/ssl/otp-relay/server.crt ]]; then
   openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
     -keyout /etc/ssl/otp-relay/server.key \
     -out    /etc/ssl/otp-relay/server.crt \
-    -subj   "/C=AE/O=Company/CN=srvotp26.init-db.lan" \
-    -addext "subjectAltName=DNS:srvotp26.init-db.lan" \
+    -subj   "/C=AE/O=Company/CN=${SERVER_HOSTNAME}" \
+    -addext "subjectAltName=DNS:${SERVER_HOSTNAME},IP:${SERVER_IP}" \
     2>/dev/null
   chmod 600 /etc/ssl/otp-relay/server.key
   chmod 644 /etc/ssl/otp-relay/server.crt
-  ok "Self-signed certificate created (10 years)"
+  ok "Self-signed certificate created (10 years) — ${SERVER_HOSTNAME} + ${SERVER_IP}"
 else
   ok "TLS certificate already exists (not regenerated)"
+  info "To regenerate with updated hostname/IP: sudo rm /etc/ssl/otp-relay/server.crt && sudo bash $0"
 fi
 
-cp "$INSTALL_DIR/nginx/otp-relay.conf" /etc/nginx/sites-available/otp-relay
+SERVER_HOSTNAME="$SERVER_HOSTNAME" SERVER_IP="$SERVER_IP" \
+  envsubst '${SERVER_HOSTNAME} ${SERVER_IP}' \
+  < "$INSTALL_DIR/nginx/otp-relay.conf.template" \
+  > /etc/nginx/sites-available/otp-relay
 ln -sf /etc/nginx/sites-available/otp-relay /etc/nginx/sites-enabled/otp-relay
 nginx -t 2>/dev/null && systemctl enable nginx --now && systemctl reload nginx
 ok "nginx configured and reloaded"
@@ -160,7 +177,7 @@ echo -e "${BOLD}═════════════════════�
 echo -e "${BOLD}  Install complete${RESET}"
 echo -e "${BOLD}═══════════════════════════════════════════════════════${RESET}"
 echo ""
-echo -e "  Portal:   ${CYAN}https://srvotp26.init-db.lan${RESET}"
+echo -e "  Portal:   ${CYAN}${PORTAL_URL}${RESET}"
 echo -e "  Config:   sudo nano $INSTALL_DIR/.env"
 echo -e "  Users:    sudo bash $INSTALL_DIR/deploy_users.sh"
 echo -e "  Logs:     sudo journalctl -u otp-relay -f"
