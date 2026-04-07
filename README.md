@@ -91,7 +91,7 @@ otp-relay/
 ├── frontend/
 │   └── index.html               root:root         644
 ├── nginx/
-│   └── otp-relay.conf           root:root         644
+│   └── otp-relay.conf.template  root:root         644
 ├── systemd/
 │   ├── otp-relay.service        root:root         644
 │   └── otp-monitor.service      root:root         644
@@ -116,6 +116,13 @@ sudo bash install.sh
 
 `install.sh` creates the venv, sets permissions, generates the TLS cert, configures nginx and both systemd services — all in one shot. It will not overwrite an existing `.env`.
 
+After running the installer, disable the default nginx site which would otherwise interfere:
+
+```bash
+sudo rm /etc/nginx/sites-enabled/default
+sudo systemctl reload nginx
+```
+
 ### After running the installer
 
 Edit `.env`:
@@ -128,6 +135,8 @@ Key values to fill in:
 
 | Variable | Notes |
 |---|---|
+| `SERVER_HOSTNAME` | Server hostname e.g. `srvotp26.init-db.lan` — used for nginx, TLS cert and portal URL |
+| `SERVER_IP` | Server LAN IP e.g. `172.31.10.80` — added to TLS cert SAN so iPhone Shortcut can connect by IP |
 | `SMS_SECRET_TOKEN` | Generate: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `SMTP_HOST` | Exchange server hostname |
 | `SMTP_PORT` | `25` for anonymous relay (recommended), `587` for STARTTLS with auth |
@@ -214,9 +223,8 @@ Change it in `.env` and restart `otp-monitor` to apply. No code changes needed.
 - Method: **POST**
 - Headers:
   - `X-Secret-Token` : *(paste value from SMS_SECRET_TOKEN in .env — no quotes)*
-  - `Content-Type` : `application/json`
 - Request Body: **JSON**
-  - Key: `body` → Value: output of Get Text from Input
+  - Key: `body` → Value: select the **Get text from** variable (the output of Action 1 — tap the variable picker, do not use "Shortcut Input" directly)
 
 **Action 3 — Suppress notification:**
 - Add: **Stop and Output**
@@ -232,6 +240,8 @@ If the Shortcut fires but you see no `sms_received` event in the log, the most c
 - iPhone dropped off the company WiFi — check Settings → WiFi, reconnect if needed. DNS for `.lan` only resolves on the internal network.
 - The secret token in the Shortcut header doesn't match `SMS_SECRET_TOKEN` in `.env` — look for `sms_rejected` in the audit log.
 - iOS cached stale DNS — toggle WiFi off and back on to flush.
+- Certificate error in Shortcut despite Safari working — reboot the iPhone. Shortcuts runs in a background context that requires a reboot to pick up new certificate trust settings.
+- "Automation failed / Last attempt to run your Shortcut failed" — check that the automation trigger has **Run Immediately: ON**. iOS sometimes resets this after updates.
 
 ### Trust the self-signed certificate on iPhone
 
@@ -249,6 +259,8 @@ On iPhone:
 # Remove cert from web root once installed
 sudo rm /opt/otp-relay/frontend/srvotp26.crt
 ```
+
+> ⚠️ **Reboot the iPhone after trusting the certificate.** iOS Shortcuts runs in a background context that does not pick up new certificate trust settings until after a reboot. Safari will work immediately, but the Shortcut will keep failing with a certificate error until the phone is restarted.
 
 ### Push certificate to company PCs (IT task)
 
