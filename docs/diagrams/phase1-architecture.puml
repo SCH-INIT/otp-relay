@@ -1,0 +1,83 @@
+@startuml phase1-architecture
+
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam nodesep 40
+skinparam ranksep 50
+skinparam padding 6
+skinparam ArrowColor #6B7280
+skinparam ArrowThickness 1.5
+skinparam ArrowFontColor #6B7280
+skinparam ArrowFontSize 11
+
+skinparam rectangle {
+  FontSize 12
+  BorderThickness 1
+}
+
+skinparam node {
+  FontSize 12
+  BorderThickness 1
+}
+
+skinparam database {
+  FontSize 12
+  BorderThickness 1
+}
+
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #D1D5DB
+  FontSize 11
+  FontColor #6B7280
+}
+
+title OTP Relay — Phase 1 architecture\n<size:11><color:#6B7280>single node K3s, one pod, no Redis yet</color></size>
+
+' ── ACTORS ────────────────────────────────────────────────────────────────────
+
+actor "User\n(browser)" as USER
+actor "iPhone\n(SMS shortcut)" as PHONE
+
+' ── K3S NODE ──────────────────────────────────────────────────────────────────
+
+node "Bare metal K3s node — DC1" as K3S #E1F5EE {
+
+  rectangle "**Ingress controller**\nnginx, TLS termination\nMetalLB VIP" as INGRESS #9FE1CB
+
+  node "Namespace: otp-relay" as NS #EEEDFE {
+
+    node "Pod: otp-relay" as POD #AFA9EC {
+
+      rectangle "**Container: app**\nuvicorn, 1 worker\nport 8000" as APP #CECBF6
+
+      rectangle "**In-memory state**\nclaim_queue (deque)\npending_otps (dict)" as MEM #F1EFE8
+
+      APP -right-> MEM : reads /\nwrites
+    }
+
+    database "**PersistentVolumeClaim**\ndata/users.xlsx\ndata/audit.log" as PVC #D3D1C7
+  }
+}
+
+' ── FLOWS ─────────────────────────────────────────────────────────────────────
+
+USER  -right-> INGRESS : HTTPS
+PHONE -right-> INGRESS : HTTPS\nX-Secret-Token
+
+INGRESS -down-> APP : HTTP :8000\n/claim-otp\n/claim-status\n/sms-received
+
+APP -down-> PVC : reads users.xlsx\nwrites audit.log
+
+note bottom of MEM
+  Lost on pod restart.
+  Accepted in Phase 1.
+  Fixed in Phase 2 with Redis.
+end note
+
+note bottom of PVC
+  Survives pod restarts.
+  Mounted at /app/data.
+end note
+
+@enduml

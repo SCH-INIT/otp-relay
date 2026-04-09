@@ -1,17 +1,14 @@
 # OTP Relay Server — main.py
-# Stack: FastAPI + Python 3.12 + Exchange SMTP (internal only)
+# Stack: FastAPI + Python 3.12
 # No external APIs. Runs entirely on your company LAN.
 #
-# Delivery model: OTP is displayed on-screen via polling. Email is NOT used
-# for OTP delivery. SMTP config and /admin/smtp-test are retained for
-# diagnostics only.
+# Delivery model: OTP is displayed on-screen via polling.
+# No email. No SMTP. No external dependencies.
 
-import os, re, asyncio, logging, smtplib, json
+import os, re, asyncio, logging, json
 from collections import deque
 from datetime import datetime
 from typing import Optional
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 import openpyxl
@@ -34,27 +31,18 @@ app.add_middleware(
 # ── Config ────────────────────────────────────────────────────────────────────
 SMS_SECRET_TOKEN = os.getenv("SMS_SECRET_TOKEN", "changeme")
 
-SMTP_HOST        = os.getenv("SMTP_HOST", "mail.company.local")
-SMTP_PORT        = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER        = os.getenv("SMTP_USER", "otp-relay@company.com")
-SMTP_PASSWORD    = os.getenv("SMTP_PASSWORD", "")
-SMTP_USE_TLS     = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-SMTP_AUTH        = os.getenv("SMTP_AUTH", "true").lower() == "true"
-FROM_EMAIL       = os.getenv("FROM_EMAIL", SMTP_USER)
-FROM_NAME        = os.getenv("FROM_NAME", "OTP Relay")
-
 # How long the active user has to trigger their OTP before being evicted.
 # Other users wait until this window expires or OTP is delivered.
-CLAIM_EXPIRY_SEC  = int(os.getenv("CLAIM_EXPIRY_SEC", "90"))
+CLAIM_EXPIRY_SEC    = int(os.getenv("CLAIM_EXPIRY_SEC",    "90"))
 
 # How long the delivered OTP stays visible on-screen before being purged.
-OTP_DISPLAY_SEC   = int(os.getenv("OTP_DISPLAY_SEC", "285"))   # 4 min 45 sec
+OTP_DISPLAY_SEC     = int(os.getenv("OTP_DISPLAY_SEC",     "285"))   # 4 min 45 sec
 
 # If two claims arrive within this window, log a concurrent_risk event.
 CONCURRENT_RISK_SEC = int(os.getenv("CONCURRENT_RISK_SEC", "30"))
 
 USERS_EXCEL_PATH = os.getenv("USERS_EXCEL_PATH", "data/users.xlsx")
-AUDIT_LOG_PATH   = os.getenv("AUDIT_LOG_PATH", "data/audit.log")
+AUDIT_LOG_PATH   = os.getenv("AUDIT_LOG_PATH",   "data/audit.log")
 
 # ── State ─────────────────────────────────────────────────────────────────────
 # Queue: max depth 1 enforced at claim time. Others wait and poll.
@@ -90,8 +78,8 @@ def load_users_from_excel(path: str) -> int:
         for c in next(ws.iter_rows(min_row=1, max_row=1))
     ]
 
-    loaded   = 0
-    skipped  = 0
+    loaded      = 0
+    skipped     = 0
     seen_tokens = {}
 
     for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
@@ -201,28 +189,6 @@ def extract_otp(text: str) -> str:
     return match.group() if match else "—"
 
 
-# ── Email (diagnostics only — not used for OTP delivery) ─────────────────────
-def send_email(to_email: str, name: str, subject: str, html: str):
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"{FROM_NAME} <{FROM_EMAIL}>"
-    msg["To"]      = to_email
-    msg.attach(MIMEText(html, "html"))
-
-    if SMTP_USE_TLS:
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
-        server.ehlo()
-        server.starttls()
-    else:
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
-
-    if SMTP_AUTH:
-        server.login(SMTP_USER, SMTP_PASSWORD)
-
-    server.sendmail(FROM_EMAIL, to_email, msg.as_string())
-    server.quit()
-
-
 # ── Background task ───────────────────────────────────────────────────────────
 async def background_purge():
     """Runs every 15 seconds to expire stale queue entries and OTP display windows."""
@@ -264,9 +230,9 @@ async def claim_otp(request: Request):
             remaining = max(0, int(CLAIM_EXPIRY_SEC - age))
             audit("claim_duplicate", token, f"Already at position {i+1}", "warn")
             return {
-                "status":     "already_queued",
-                "position":   i + 1,
-                "expires_in": remaining,
+                "status":      "already_queued",
+                "position":    i + 1,
+                "expires_in":  remaining,
                 "queue_depth": len(claim_queue),
             }
 
@@ -297,10 +263,10 @@ async def claim_otp(request: Request):
         "claimed_at": now,
     })
 
-    position   = len(claim_queue)
+    position    = len(claim_queue)
     queue_depth = len(claim_queue)
 
-    # Worst-case wait: each person ahead of them gets the full CLAIM_EXPIRY_SEC.
+    # Worst-case wait: each person ahead gets the full CLAIM_EXPIRY_SEC.
     # Position 1 = active now, position 2 = up to 1×90s, etc.
     wait_estimate = max(0, (position - 1) * CLAIM_EXPIRY_SEC)
 
@@ -311,7 +277,7 @@ async def claim_otp(request: Request):
         "name":          users[token]["name"],
         "expires_in":    CLAIM_EXPIRY_SEC,
         "queue_depth":   queue_depth,
-        "wait_estimate": wait_estimate,   # seconds, worst case
+        "wait_estimate": wait_estimate,
     }
 
 
@@ -335,9 +301,8 @@ async def claim_status(token: str):
     # Still in the claim queue
     for i, claim in enumerate(claim_queue):
         if claim["token"] == token:
-            age       = (datetime.utcnow() - claim["claimed_at"]).total_seconds()
-            remaining = max(0, int(CLAIM_EXPIRY_SEC - age))
-            # Worst-case wait for users behind position 1
+            age           = (datetime.utcnow() - claim["claimed_at"]).total_seconds()
+            remaining     = max(0, int(CLAIM_EXPIRY_SEC - age))
             wait_estimate = max(0, i * CLAIM_EXPIRY_SEC)
             return {
                 "status":        "waiting",
@@ -452,19 +417,6 @@ async def reload_users():
     count = load_users_from_excel(USERS_EXCEL_PATH)
     audit("users_reloaded", detail=f"{count} users loaded")
     return {"status": "ok", "users_loaded": count}
-
-
-@app.get("/admin/smtp-test")
-async def smtp_test():
-    """Sends a test email to the relay account — use to verify Exchange connectivity."""
-    html = """<div style="font-family:Arial,sans-serif;padding:24px">
-      <p>OTP Relay SMTP test — if you can read this, Exchange is working. 🎉</p>
-    </div>"""
-    try:
-        send_email(FROM_EMAIL, "OTP Relay", "OTP Relay — SMTP connectivity test", html)
-        return {"status": "ok", "sent_to": FROM_EMAIL}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
 
 
 # Serve frontend — must be last

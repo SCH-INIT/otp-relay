@@ -1,0 +1,172 @@
+<svg width="100%" viewBox="0 0 680 940" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>OTP Relay Kubernetes phase map</title>
+<desc>Four phases: containerise and ship, fix stateful pain with Redis, resilience in one cluster, optional second data centre.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <style>
+    text { font-family: system-ui, sans-serif; }
+    .th  { font-size: 14px; font-weight: 500; fill: #1F2937; }
+    .ts  { font-size: 12px; font-weight: 400; fill: #4B5563; }
+    .arr { stroke: #9CA3AF; stroke-width: 1.5; fill: none; }
+
+    /* teal — phase 1 */
+    .p1-bg  { fill: #E1F5EE; stroke: #0F6E56; }
+    .p1-box { fill: #9FE1CB; stroke: #0F6E56; }
+    .p1-txt { fill: #085041; }
+    .p1-sub { fill: #0F6E56; }
+
+    /* purple — phase 2 */
+    .p2-bg   { fill: #EEEDFE; stroke: #534AB7; }
+    .p2-box  { fill: #AFA9EC; stroke: #534AB7; }
+    .p2-txt  { fill: #26215C; }
+    .p2-sub  { fill: #3C3489; }
+
+    /* coral — broken state */
+    .p2-bad  { fill: #F5C4B3; stroke: #993C1D; }
+    .p2-btxt { fill: #4A1B0C; }
+    .p2-bsub { fill: #712B13; }
+
+    /* amber — phase 3 */
+    .p3-bg  { fill: #FAEEDA; stroke: #854F0B; }
+    .p3-box { fill: #FAC775; stroke: #854F0B; }
+    .p3-txt { fill: #412402; }
+    .p3-sub { fill: #633806; }
+
+    /* gray — phase 4 + neutral */
+    .p4-bg  { fill: #F1EFE8; stroke: #5F5E5A; }
+    .p4-box { fill: #D3D1C7; stroke: #5F5E5A; }
+    .p4-txt { fill: #2C2C2A; }
+    .p4-sub { fill: #444441; }
+  </style>
+</defs>
+
+<text class="th" x="340" y="34" text-anchor="middle" style="font-size:15px">OTP Relay → Kubernetes: phase map</text>
+<text class="ts" x="340" y="54" text-anchor="middle">one phase at a time, or so help us</text>
+
+<!-- ── PHASE 1 ─────────────────────────────────────────────────────────── -->
+<rect class="p1-bg" x="30" y="70" width="620" height="182" rx="14" stroke-width="0.5"/>
+<text class="th p1-txt" x="50" y="96">Phase 1 — containerise and ship</text>
+<text class="ts p1-sub" x="50" y="114">Run the existing app, exactly as-is, in K3s. No rewrites. No new state layer.</text>
+
+<rect class="p4-box" x="50"  y="126" width="112" height="106" rx="8" stroke-width="0.5"/>
+<text class="th p4-txt" x="106" y="151" text-anchor="middle" dominant-baseline="central">Dockerfile</text>
+<text class="ts p4-sub" x="106" y="171" text-anchor="middle" dominant-baseline="central">FastAPI + venv</text>
+<text class="ts p4-sub" x="106" y="187" text-anchor="middle" dominant-baseline="central">+ frontend</text>
+<text class="ts p4-sub" x="106" y="203" text-anchor="middle" dominant-baseline="central">1 worker</text>
+
+<rect class="p1-box" x="178" y="126" width="112" height="106" rx="8" stroke-width="0.5"/>
+<text class="th p1-txt" x="234" y="151" text-anchor="middle" dominant-baseline="central">Deployment</text>
+<text class="ts p1-sub" x="234" y="171" text-anchor="middle" dominant-baseline="central">1 replica</text>
+<text class="ts p1-sub" x="234" y="187" text-anchor="middle" dominant-baseline="central">probes</text>
+<text class="ts p1-sub" x="234" y="203" text-anchor="middle" dominant-baseline="central">rolling update</text>
+
+<rect class="p1-box" x="306" y="126" width="112" height="106" rx="8" stroke-width="0.5"/>
+<text class="th p1-txt" x="362" y="151" text-anchor="middle" dominant-baseline="central">ConfigMap</text>
+<text class="ts p1-sub" x="362" y="171" text-anchor="middle" dominant-baseline="central">+ Secret</text>
+<text class="ts p1-sub" x="362" y="187" text-anchor="middle" dominant-baseline="central">env vars</text>
+<text class="ts p1-sub" x="362" y="203" text-anchor="middle" dominant-baseline="central">no .env file</text>
+
+<rect class="p1-box" x="434" y="126" width="112" height="106" rx="8" stroke-width="0.5"/>
+<text class="th p1-txt" x="490" y="151" text-anchor="middle" dominant-baseline="central">MetalLB</text>
+<text class="ts p1-sub" x="490" y="171" text-anchor="middle" dominant-baseline="central">LAN IP on</text>
+<text class="ts p1-sub" x="490" y="187" text-anchor="middle" dominant-baseline="central">bare metal</text>
+<text class="ts p1-sub" x="490" y="203" text-anchor="middle" dominant-baseline="central">K3s</text>
+
+<rect class="p4-box" x="562" y="126" width="74" height="106" rx="8" stroke-width="0.5" stroke-dasharray="5 3"/>
+<text class="th p4-txt" x="599" y="162" text-anchor="middle" dominant-baseline="central">PVC</text>
+<text class="ts p4-sub" x="599" y="182" text-anchor="middle" dominant-baseline="central">data/</text>
+<text class="ts p4-sub" x="599" y="198" text-anchor="middle" dominant-baseline="central">audit log</text>
+
+<line x1="340" y1="252" x2="340" y2="284" stroke="#9CA3AF" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+<text class="ts" x="358" y="271" dominant-baseline="central" fill="#9CA3AF">break it on purpose</text>
+
+<!-- ── PHASE 2 ─────────────────────────────────────────────────────────── -->
+<rect class="p2-bg" x="30" y="288" width="620" height="192" rx="14" stroke-width="0.5"/>
+<text class="th p2-txt" x="50" y="314">Phase 2 — fix the stateful pain</text>
+<text class="ts p2-sub" x="50" y="332">Scale to 2 replicas. Watch the queue break. Add Redis. Scale again. Now it works.</text>
+
+<rect class="p2-bad" x="50" y="348" width="166" height="112" rx="8" stroke-width="0.5"/>
+<text class="th p2-btxt" x="133" y="372" text-anchor="middle" dominant-baseline="central">2 replicas</text>
+<text class="ts p2-bsub" x="133" y="392" text-anchor="middle" dominant-baseline="central">queue splits across</text>
+<text class="ts p2-bsub" x="133" y="408" text-anchor="middle" dominant-baseline="central">pods. SMS hits</text>
+<text class="ts p2-bsub" x="133" y="424" text-anchor="middle" dominant-baseline="central">wrong one. chaos.</text>
+
+<line x1="216" y1="404" x2="252" y2="404" stroke="#9CA3AF" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+<rect class="p2-box" x="256" y="348" width="148" height="112" rx="8" stroke-width="0.5"/>
+<text class="th p2-txt" x="330" y="376" text-anchor="middle" dominant-baseline="central">Redis</text>
+<text class="ts p2-sub" x="330" y="396" text-anchor="middle" dominant-baseline="central">shared queue</text>
+<text class="ts p2-sub" x="330" y="412" text-anchor="middle" dominant-baseline="central">TTL per entry</text>
+<text class="ts p2-sub" x="330" y="428" text-anchor="middle" dominant-baseline="central">StatefulSet + PVC</text>
+
+<line x1="404" y1="404" x2="440" y2="404" stroke="#9CA3AF" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+<rect class="p1-box" x="444" y="348" width="192" height="112" rx="8" stroke-width="0.5"/>
+<text class="th p1-txt" x="540" y="376" text-anchor="middle" dominant-baseline="central">2 replicas</text>
+<text class="ts p1-sub" x="540" y="396" text-anchor="middle" dominant-baseline="central">queue in Redis</text>
+<text class="ts p1-sub" x="540" y="412" text-anchor="middle" dominant-baseline="central">any pod serves</text>
+<text class="ts p1-sub" x="540" y="428" text-anchor="middle" dominant-baseline="central">any SMS. it works.</text>
+
+<line x1="340" y1="480" x2="340" y2="512" stroke="#9CA3AF" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+<text class="ts" x="358" y="499" dominant-baseline="central" fill="#9CA3AF">now make it robust</text>
+
+<!-- ── PHASE 3 ─────────────────────────────────────────────────────────── -->
+<rect class="p3-bg" x="30" y="516" width="620" height="180" rx="14" stroke-width="0.5"/>
+<text class="th p3-txt" x="50" y="542">Phase 3 — resilience in one cluster</text>
+<text class="ts p3-sub" x="50" y="560">Kill pods. Drain nodes. Watch it recover. Add monitoring so you know when it doesn't.</text>
+
+<rect class="p3-box" x="50"  y="574" width="132" height="102" rx="8" stroke-width="0.5"/>
+<text class="th p3-txt" x="116" y="598" text-anchor="middle" dominant-baseline="central">Chaos</text>
+<text class="ts p3-sub" x="116" y="616" text-anchor="middle" dominant-baseline="central">kill -9 pods</text>
+<text class="ts p3-sub" x="116" y="632" text-anchor="middle" dominant-baseline="central">drain nodes</text>
+<text class="ts p3-sub" x="116" y="648" text-anchor="middle" dominant-baseline="central">watch recovery</text>
+
+<rect class="p3-box" x="198" y="574" width="132" height="102" rx="8" stroke-width="0.5"/>
+<text class="th p3-txt" x="264" y="598" text-anchor="middle" dominant-baseline="central">Limits</text>
+<text class="ts p3-sub" x="264" y="616" text-anchor="middle" dominant-baseline="central">requests +</text>
+<text class="ts p3-sub" x="264" y="632" text-anchor="middle" dominant-baseline="central">limits on all</text>
+<text class="ts p3-sub" x="264" y="648" text-anchor="middle" dominant-baseline="central">containers</text>
+
+<rect class="p3-box" x="346" y="574" width="132" height="102" rx="8" stroke-width="0.5"/>
+<text class="th p3-txt" x="412" y="598" text-anchor="middle" dominant-baseline="central">PDB</text>
+<text class="ts p3-sub" x="412" y="616" text-anchor="middle" dominant-baseline="central">never all pods</text>
+<text class="ts p3-sub" x="412" y="632" text-anchor="middle" dominant-baseline="central">down at once</text>
+<text class="ts p3-sub" x="412" y="648" text-anchor="middle" dominant-baseline="central">PodDisruptionBudget</text>
+
+<rect class="p3-box" x="494" y="574" width="142" height="102" rx="8" stroke-width="0.5"/>
+<text class="th p3-txt" x="565" y="598" text-anchor="middle" dominant-baseline="central">Monitoring</text>
+<text class="ts p3-sub" x="565" y="616" text-anchor="middle" dominant-baseline="central">Prometheus</text>
+<text class="ts p3-sub" x="565" y="632" text-anchor="middle" dominant-baseline="central">+ Grafana</text>
+<text class="ts p3-sub" x="565" y="648" text-anchor="middle" dominant-baseline="central">or k9s to start</text>
+
+<line x1="340" y1="696" x2="340" y2="728" stroke="#9CA3AF" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+<text class="ts" x="358" y="715" dominant-baseline="central" fill="#9CA3AF">only if appetite remains</text>
+
+<!-- ── PHASE 4 ─────────────────────────────────────────────────────────── -->
+<rect class="p4-bg" x="30" y="732" width="620" height="168" rx="14" stroke-width="0.5" stroke-dasharray="6 3"/>
+<text class="th p4-txt" x="50" y="758">Phase 4 — second data centre</text>
+<text class="ts p4-sub" x="50" y="776">Optional. Future-us problem. By now you will understand what this actually costs.</text>
+
+<rect class="p4-box" x="50"  y="790" width="184" height="90" rx="8" stroke-width="0.5"/>
+<text class="th p4-txt" x="142" y="816" text-anchor="middle" dominant-baseline="central">DC1 — active</text>
+<text class="ts p4-sub" x="142" y="836" text-anchor="middle" dominant-baseline="central">K3s + Redis primary</text>
+<text class="ts p4-sub" x="142" y="852" text-anchor="middle" dominant-baseline="central">app pods</text>
+
+<line x1="234" y1="835" x2="316" y2="835" stroke="#9CA3AF" stroke-width="0.5" stroke-dasharray="5 3" fill="none" marker-end="url(#arrow)"/>
+<line x1="316" y1="843" x2="234" y2="843" stroke="#9CA3AF" stroke-width="0.5" stroke-dasharray="5 3" fill="none" marker-end="url(#arrow)"/>
+<text class="ts" x="275" y="826" text-anchor="middle" fill="#9CA3AF">replication</text>
+
+<rect class="p4-box" x="320" y="790" width="184" height="90" rx="8" stroke-width="0.5"/>
+<text class="th p4-txt" x="412" y="816" text-anchor="middle" dominant-baseline="central">DC2 — standby</text>
+<text class="ts p4-sub" x="412" y="836" text-anchor="middle" dominant-baseline="central">K3s + Redis replica</text>
+<text class="ts p4-sub" x="412" y="852" text-anchor="middle" dominant-baseline="central">app pods (warm)</text>
+
+<rect class="p4-box" x="520" y="790" width="116" height="90" rx="8" stroke-width="0.5" stroke-dasharray="5 3"/>
+<text class="th p4-txt" x="578" y="816" text-anchor="middle" dominant-baseline="central">Runbook</text>
+<text class="ts p4-sub" x="578" y="836" text-anchor="middle" dominant-baseline="central">failover +</text>
+<text class="ts p4-sub" x="578" y="852" text-anchor="middle" dominant-baseline="central">DR tests</text>
+
+<text class="ts" x="340" y="918" text-anchor="middle" fill="#9CA3AF">active/active needs app redesign — active/standby with manual failover is probably enough</text>
+</svg>
