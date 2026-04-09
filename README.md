@@ -1,5 +1,5 @@
 # OTP Relay
-**Ubuntu 24.04 LTS · Company LAN · Exchange SMTP**
+**Ubuntu 24.04 LTS · Company LAN · On-screen OTP delivery**
 Server: `srvotp26.init-db.lan` · Portal: `https://srvotp26.init-db.lan`
 
 ---
@@ -10,20 +10,26 @@ Server: `srvotp26.init-db.lan` · Portal: `https://srvotp26.init-db.lan`
 iPhone 16 (company WiFi)
    ↓  iOS 26 Shortcut → HTTPS POST /sms-received
 srvotp26 (Ubuntu 24.04 VM)
-   ↓  pops first user from claim queue
-Exchange SMTP (init-db.lan)
-   ↓  sends HTML email with OTP
-User's inbox
+   ↓  matches SMS to the active claimant
+   ↓  stores OTP in memory (never on disk)
+Portal (user's browser)
+   ↓  polls /claim-status every 3 seconds
+OTP appears on screen — no email involved
 ```
 
-1. User opens the portal → enters their 2 or 3 character token → clicks the button
-2. Server places them in a FIFO queue with a 5-minute expiry window
-3. User immediately opens the platform and triggers the OTP SMS
+1. User opens the portal → enters their 2 or 3 character token → clicks **Claim my slot**
+2. If the queue is empty, they become the active user immediately. If someone is ahead of them, they enter the waiting room and are told not to trigger their OTP yet.
+3. Once active, the user opens the platform and triggers the OTP SMS. They have **90 seconds** before their slot is reclaimed.
 4. iPhone receives SMS → Shortcut fires → POSTs to server over LAN
-5. Server pops the first person in queue and emails them the OTP via Exchange
-6. Portal auto-confirms delivery. Every step is written to `data/audit.log`.
+5. Server stores the OTP in memory (never logged, never written to disk) and unblocks the queue
+6. The OTP appears on the user's screen. It stays visible for **4 minutes 45 seconds**, during which other users can already claim the next slot.
+7. Every step is written to `data/audit.log`. OTP values are never recorded.
 
-A second service (`otp-monitor`) runs alongside the main app. It pings the iPhone every few minutes using ARP and tails the audit log in real time, forwarding error-level events to an IT contact via WhatsApp.
+A second service (`otp-monitor`) runs alongside the main app. It pings the iPhone every few minutes using ARP and forwards error-level audit events to an IT contact via WhatsApp.
+
+### Queue design
+
+Only one user is active at a time. This is a deliberate safety constraint: because OTP SMS messages carry no user-identifying information, the server cannot match an incoming SMS to a specific person. Concurrent active users would cause mis-delivery. The 90-second slot window keeps wait times short — a normal flow completes in under 30 seconds.
 
 ---
 
@@ -41,7 +47,9 @@ otp-relay/
 ├── .gitignore
 ├── README.md
 ├── frontend/
-│   └── index.html           # Self-contained portal UI
+│   ├── index.html           # Portal markup (structure only)
+│   ├── style.css            # All styles — INIT design system
+│   └── app.js               # All UI logic — edit this for frontend changes
 ├── nginx/
 │   └── otp-relay.conf       # nginx reverse proxy config
 ├── scripts/
@@ -89,7 +97,9 @@ otp-relay/
 ├── .env.template                root:root         644
 ├── .env                         root:otprelay     640  (not in git)
 ├── frontend/
-│   └── index.html               root:root         644
+│   ├── index.html               root:root         644
+│   ├── style.css                root:root         644
+│   └── app.js                   root:root         644
 ├── nginx/
 │   └── otp-relay.conf.template  root:root         644
 ├── systemd/
@@ -135,18 +145,17 @@ Key values to fill in:
 
 | Variable | Notes |
 |---|---|
-| `SERVER_HOSTNAME` | Server hostname e.g. `srvotp26.init-db.lan` — used for nginx, TLS cert and portal URL |
-| `SERVER_IP` | Server LAN IP e.g. `172.31.10.80` — added to TLS cert SAN so iPhone Shortcut can connect by IP |
-| `SMS_SECRET_TOKEN` | Generate: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
-| `SMTP_HOST` | Exchange server hostname |
-| `SMTP_PORT` | `25` for anonymous relay (recommended), `587` for STARTTLS with auth |
-| `SMTP_AUTH` | `false` for anonymous relay on port 25, `true` for authenticated SMTP |
-| `SMTP_USER` | Full UPN format: `otp-relay@init-db.lan` |
-| `SMTP_PASSWORD` | Leave empty if using anonymous relay (`SMTP_AUTH=false`) |
+| `SERVER_HOSTNAME` | e.g. `srvotp26.init-db.lan` — used for nginx config, TLS cert, and portal URL |
+| `SERVER_IP` | Server LAN IP — added to TLS cert SAN so the iPhone Shortcut can connect by IP if needed |
+| `SMS_SECRET_TOKEN` | Generate: `python3 -c "import secrets; print(secrets.token_hex(32))"` — paste into Shortcut |
+| `CLAIM_EXPIRY_SEC` | Seconds the active user has to trigger their OTP before being evicted (default: `90`) |
+| `OTP_DISPLAY_SEC` | Seconds the OTP stays visible on screen after arrival (default: `285` = 4 min 45 sec) |
 | `WHATSAPP_API_KEY` | From CallMeBot registration (see Monitor & Alerts section) |
-| `WHATSAPP_RECIPIENT` | IT contact's number in full international format: `+971501234567` |
+| `WHATSAPP_RECIPIENT` | IT contact number in full international format: `+971501234567` |
 | `PHONE_IP` | Static IP of the company iPhone — ask IT to set a DHCP reservation |
 | `PHONE_INTERFACE` | Network interface name — check with `ip link` (typically `ens33`) |
+
+SMTP settings are only needed if you use `/admin/smtp-test` for Exchange diagnostics. They play no role in OTP delivery.
 
 Then start the services:
 
@@ -171,7 +180,7 @@ sudo bash /opt/otp-relay/update.sh            # pull latest + sync units + resta
 sudo bash /opt/otp-relay/update.sh --no-restart  # pull only
 ```
 
-`update.sh` automatically detects changes to systemd unit files and re-copies them to `/etc/systemd/system/`, so unit changes deploy without any manual steps.
+`update.sh` automatically detects changes to systemd unit files and re-copies them to `/etc/systemd/system/`, so unit changes deploy without manual steps.
 
 ---
 
@@ -200,7 +209,7 @@ sudo bash /opt/otp-relay/update.sh --no-restart  # pull only
 | `warn` | Warnings and errors — useful when troubleshooting |
 | `info` | Everything — use only for active debugging sessions |
 
-Change it in `.env` and restart `otp-monitor` to apply. No code changes needed.
+Change it in `.env` and restart `otp-monitor` to apply.
 
 ---
 
@@ -294,7 +303,9 @@ Rows that fail validation are skipped and written to the audit log as `import_sk
 
 ---
 
-## Verify Exchange SMTP
+## Exchange SMTP (diagnostics only)
+
+OTP delivery no longer uses email. The SMTP configuration is retained solely for the `/admin/smtp-test` endpoint, which lets you verify Exchange connectivity independently of OTP delivery.
 
 ```bash
 curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
@@ -302,7 +313,7 @@ curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
 
 Expected: `{"status": "ok", "sent_to": "otp-relay@init-db.lan"}`
 
-This installation uses anonymous relay on port 25 — the Exchange connector trusts the server's internal IP without requiring credentials:
+This installation uses anonymous relay on port 25:
 
 ```
 SMTP_PORT=25
@@ -323,34 +334,40 @@ SMTP_USER=otp-relay               ✗  does not work
 ## Simulate an SMS (for testing without the iPhone)
 
 ```bash
-# 1. First, claim a slot in the portal as normal
-# 2. Then inject a fake SMS — paste the token value literally
+# 1. Claim a slot in the portal as normal — the OTP will appear on that browser tab
+# 2. Inject a fake SMS from the server
 curl -sk -X POST https://srvotp26.init-db.lan/sms-received \
   -H "Content-Type: application/json" \
-  -H "X-Secret-Token: PASTE_TOKEN_LITERALLY_HERE" \
+  -H "X-Secret-Token: PASTE_YOUR_SMS_SECRET_TOKEN_HERE" \
   -d '{"body": "Your login code is 482910. Valid for 5 minutes."}'
 ```
+
+The OTP (`482910`) will appear on the portal immediately. It is not stored anywhere on the server.
 
 ---
 
 ## Audit Log Events
 
 Every event is appended to `/opt/otp-relay/data/audit.log` (one JSON object per line).
+OTP values are never recorded — only metadata.
 
 | Event | Status | Meaning |
 |---|---|---|
 | `server_start` | info | Service started, users loaded |
-| `import_complete` | info/warn | Excel load finished — warn if any rows skipped |
+| `import_complete` | info/warn | Excel load finished — warn if any rows were skipped |
 | `import_skipped` | warn | A row was skipped — detail gives row number and reason |
 | `claim_queued` | info | User joined the queue |
-| `claim_duplicate` | warn | User clicked twice — second click ignored, remaining time shown |
+| `claim_duplicate` | warn | User clicked twice — second click ignored, remaining time returned |
 | `claim_rejected` | error | Unknown token submitted |
-| `claim_expired` | warn | 5 min passed with no SMS — user removed from queue |
+| `claim_expired` | warn | 90 seconds passed with no SMS — user evicted from slot 1 |
+| `claim_cancelled` | info | User abandoned their queue slot via the Retry button |
+| `concurrent_risk` | warn | A second claim arrived within 30 s of the active one — no action taken, logged for IT visibility |
 | `sms_received` | info | iPhone Shortcut fired successfully |
-| `sms_unmatched` | warn | SMS arrived but queue was empty |
-| `sms_rejected` | error | Wrong secret token — check Shortcut config |
-| `otp_delivered` | info | Email sent successfully via Exchange |
-| `otp_delivery_failed` | error | SMTP error — user automatically re-queued |
+| `sms_unmatched` | warn | SMS arrived but queue was empty — discarded |
+| `sms_rejected` | error | Wrong secret token — check Shortcut configuration |
+| `otp_delivered` | info | OTP stored in memory and ready for display — queue unblocked |
+| `otp_display_expired` | info | OTP display window closed after 4 min 45 sec — purged from memory |
+| `otp_discarded` | info | User clicked Send again — OTP removed from memory before expiry |
 | `users_reloaded` | info | User list reloaded from Excel |
 | `monitor_start` | info | Monitor service started |
 | `monitor_error` | error | Monitor configuration error (e.g. network interface not found) |
@@ -358,8 +375,6 @@ Every event is appended to `/opt/otp-relay/data/audit.log` (one JSON object per 
 | `phone_online` | error | iPhone reachable again after offline period — WhatsApp alert sent |
 
 > `phone_offline` and `phone_online` use `error` status so they pass through the alert filter at default `ALERT_LEVEL=error`.
-
-> OTP values are never stored in the log. Only metadata is recorded.
 
 View in browser: `https://srvotp26.init-db.lan` → click **Admin**
 
@@ -402,13 +417,13 @@ sudo bash /opt/otp-relay/deploy_users.sh
 # Run end-to-end tests
 python3 /opt/otp-relay/test_otp_relay.py
 
-# Current queue
+# Current queue and pending OTP count
 curl -sk https://srvotp26.init-db.lan/admin/queue | python3 -m json.tool
 
 # All loaded users
 curl -sk https://srvotp26.init-db.lan/admin/users | python3 -m json.tool
 
-# Test Exchange SMTP
+# Test Exchange SMTP connectivity
 curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
 ```
 
@@ -420,10 +435,10 @@ curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
 >
 > 1. Go to `https://srvotp26.init-db.lan`
 > 2. Enter your **2 or 3 character token** (ask IT if you don't have one)
-> 3. Click **"Claim my slot"**
-> 4. Immediately open the platform and trigger the OTP/SMS code
-> 5. The code will arrive in your email inbox within seconds
-> 6. The page confirms automatically once it has been sent
+> 3. Click **Claim my slot**
+> 4. **If you see a waiting room:** someone is ahead of you — do not touch the platform yet. The page will tell you when it's your turn.
+> 5. **When you see "Go trigger your OTP now":** open the platform and request the SMS code immediately. You have 90 seconds.
+> 6. The OTP code appears on this page within seconds. Use it directly — no email needed.
 >
-> ⚠️ Request the OTP on the platform **immediately** after clicking the button.
-> Your slot expires after 5 minutes.
+> ⚠️ Do not trigger the OTP on the platform until the page tells you to.
+> Doing so while someone else is active will disrupt their session.
