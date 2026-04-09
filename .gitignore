@@ -1,4 +1,5 @@
 .env
+secret.env
 data/
 venv/
 __pycache__/

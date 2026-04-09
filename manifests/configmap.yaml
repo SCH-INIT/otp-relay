@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otp-relay-config
+  namespace: otp-relay
+data:
+  CLAIM_EXPIRY_SEC: "90"
+  OTP_DISPLAY_SEC: "285"
+  CONCURRENT_RISK_SEC: "30"
+  USERS_EXCEL_PATH: "data/users.xlsx"
+  AUDIT_LOG_PATH: "data/audit.log"
