@@ -36,10 +36,14 @@ USER otprelay
 
 EXPOSE 8000
 
+# Use python -m uvicorn instead of the venv script directly.
+# The uvicorn script in venv/bin/ has a hardcoded shebang pointing to the
+# builder stage path (/build/venv/bin/python) which does not exist at runtime.
+# Calling via python -m uvicorn bypasses the script entirely.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/queue')"
+    CMD /app/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/queue')"
 
-CMD ["/app/venv/bin/uvicorn", "main:app", \
+CMD ["/app/venv/bin/python", "-m", "uvicorn", "main:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
      "--workers", "1"]
