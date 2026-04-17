@@ -86,17 +86,60 @@ plain HTTP. TLS is handled outside the pod.
 
 ---
 
+## Why `python -m uvicorn` instead of calling uvicorn directly
+
+This is a non-obvious gotcha in multi-stage Python builds that bit us during
+testing. Worth understanding so it never wastes your time again.
+
+When pip installs a package like uvicorn, it creates a small launcher script
+in `venv/bin/uvicorn`. That script has a hardcoded shebang line at the top
+pointing to the Python interpreter that was used to create the venv:
+
+```
+#!/build/venv/bin/python
+```
+
+In a single-stage build this is fine. In a multi-stage build, the venv is
+created in the `builder` stage at `/build/venv/`, then copied into the
+`runtime` stage at `/app/venv/`. The script moves, but the shebang still
+points to `/build/venv/bin/python` — a path that does not exist in the
+runtime image. The result is a cryptic error:
+
+```
+exec /app/venv/bin/uvicorn: no such file or directory
+```
+
+The fix is to bypass the script entirely and call uvicorn as a Python module:
+
+```dockerfile
+CMD ["/app/venv/bin/python", "-m", "uvicorn", "main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "1"]
+```
+
+`python -m uvicorn` tells Python to find and run the uvicorn module directly.
+No launcher script involved, no hardcoded path, no problem. This applies to
+any tool installed via pip in a multi-stage build — if you hit the same error
+with a different package, the same fix applies.
+
+---
+
 ## Health check
 
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/queue')"
+    CMD /app/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/queue')"
 ```
 
 The `HEALTHCHECK` instruction tells Docker (and by extension Kubernetes) how
 to determine whether the container is healthy. It polls `/admin/queue` every
 30 seconds. If the app is up and the queue endpoint responds, the container is
 healthy.
+
+Note that we use `/app/venv/bin/python` here for the same reason as the CMD
+above — calling `python3` directly would use the system Python, which does not
+have the app's dependencies installed.
 
 The `--start-period=10s` gives uvicorn time to start before health checks
 begin. Without it, the container would be marked unhealthy during normal
@@ -109,13 +152,6 @@ useful when running the container locally without Kubernetes.
 ---
 
 ## One worker
-
-```dockerfile
-CMD ["/app/venv/bin/uvicorn", "main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--workers", "1"]
-```
 
 The app uses an in-memory `deque` for the claim queue in Phase 1. Multiple
 uvicorn workers would each have their own copy of the queue — the same problem
@@ -134,7 +170,10 @@ This constraint is resolved in Phase 2 when the queue moves to Redis.
 | `data/users.xlsx` | Lives on the `PersistentVolumeClaim`, not in the image |
 | `data/audit.log` | Same as above |
 | `venv/` source | Rebuilt cleanly during `docker build` — never copy a local venv into an image |
-| `otp-relay-deploy.sh` | Systemd deployment artifact, not relevant to the container |
+| `monitor.py` | Separate process, will become its own pod in a later phase |
+| `nginx/` | TLS termination is the ingress controller's job, not the app container's |
+| `systemd/` | Irrelevant inside a container — Kubernetes manages the process lifecycle |
+| `install.sh`, `update.sh` | Systemd deployment tools, not needed here |
 | `test_otp_relay.py` | Could be included, but keeping the runtime image lean is preferred |
 
 ---
@@ -143,28 +182,39 @@ This constraint is resolved in Phase 2 when the queue moves to Redis.
 
 ```bash
 # Build the image (run from the repo root)
-docker build -t otp-relay:dev -f k8s/Dockerfile .
+docker build -t otp-relay:latest -f k8s/Dockerfile .
 
 # Run locally for quick testing (no Kubernetes needed)
-# Secrets passed as environment variables, data directory bind-mounted
-docker run --rm \
-  -p 8000:8000 \
+# Secrets and config passed as environment variables
+docker run --rm -p 8000:8000 \
   -e SMS_SECRET_TOKEN=dev-token \
-  -e SMTP_HOST=mail.init-db.lan \
-  -e SMTP_PORT=25 \
-  -e SMTP_USER=otp-relay@init-db.lan \
-  -e SMTP_PASSWORD=your-password \
-  -e FROM_EMAIL=otp-relay@init-db.lan \
-  -e FROM_NAME="OTP Relay" \
-  -e SMTP_USE_TLS=false \
-  -e CLAIM_EXPIRY_SEC=300 \
-  -v $(pwd)/data:/app/data \
-  otp-relay:dev
+  -e CLAIM_EXPIRY_SEC=90 \
+  -e OTP_DISPLAY_SEC=285 \
+  -e CONCURRENT_RISK_SEC=30 \
+  -e USERS_EXCEL_PATH=data/users.xlsx \
+  -e AUDIT_LOG_PATH=data/audit.log \
+  otp-relay:latest
 ```
 
 The app will be reachable at `http://localhost:8000`.
 
-Note: on Windows with Git Bash, replace `$(pwd)` with `${PWD}`.
+The `users.xlsx` warning on startup is expected when running locally without
+a mounted data directory — the app starts fine, it just has no users loaded.
+To test with real users, add a volume mount:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e SMS_SECRET_TOKEN=dev-token \
+  -e CLAIM_EXPIRY_SEC=90 \
+  -e OTP_DISPLAY_SEC=285 \
+  -e CONCURRENT_RISK_SEC=30 \
+  -e USERS_EXCEL_PATH=data/users.xlsx \
+  -e AUDIT_LOG_PATH=data/audit.log \
+  -v ${PWD}/data:/app/data \
+  otp-relay:latest
+```
+
+Note: on Windows always use `${PWD}` not `$(pwd)` in Git Bash.
 
 ---
 
@@ -173,7 +223,7 @@ Note: on Windows with Git Bash, replace `$(pwd)` with `${PWD}`.
 When application code changes:
 
 ```bash
-docker build -t otp-relay:dev -f k8s/Dockerfile .
+docker build -t otp-relay:latest -f k8s/Dockerfile .
 ```
 
 Docker layer caching means only the layers that changed are rebuilt. Because
@@ -181,3 +231,7 @@ the `COPY` of `main.py` comes after the pip install, changing `main.py` does
 not trigger a full pip reinstall — only the copy and everything after it
 rebuilds. This is intentional and is why the order of instructions in the
 `Dockerfile` matters.
+
+If you add a new Python package to `main.py`, add it to the `pip install`
+block in the `Dockerfile` and rebuild with `--no-cache` to ensure a clean
+install.
