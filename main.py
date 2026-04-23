@@ -6,19 +6,21 @@
 # for OTP delivery. SMTP config and /admin/smtp-test are retained for
 # diagnostics only.
 
-import os, re, asyncio, logging, smtplib, json
+import os, re, asyncio, logging, smtplib, json, secrets
 from collections import deque
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Any, Dict, List
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
 import openpyxl
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+import bcrypt
 
 load_dotenv()
 
@@ -71,6 +73,88 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%SZ",
 )
 logger = logging.getLogger("otp-relay")
+
+
+# ── Server-backed wizard/admin state ─────────────────────────────────────────
+DATA_DIR = Path(os.environ.get("OTP_RELAY_DATA_DIR", "data"))
+WIZARD_FILE = DATA_DIR / "wizard_progress.json"
+AUTH_FILE = DATA_DIR / "admin_auth.json"
+CONFIG_FILE = DATA_DIR / "admin_config.json"
+DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
+ADMIN_TTL_SECONDS = 8 * 60 * 60
+ADMIN_SESSIONS: Dict[str, float] = {}
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _ensure_data_dir() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+def _read_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"Could not read {path}: {e}")
+        return default
+
+def _write_json(path: Path, payload: Any) -> None:
+    _ensure_data_dir()
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+def _wizard_db() -> Dict[str, dict]:
+    return _read_json(WIZARD_FILE, {})
+
+def _save_wizard_db(db: Dict[str, dict]) -> None:
+    _write_json(WIZARD_FILE, db)
+
+def _auth_db() -> Dict[str, Any]:
+    return _read_json(AUTH_FILE, {})
+
+def _save_auth_db(db: Dict[str, Any]) -> None:
+    _write_json(AUTH_FILE, db)
+
+def _config_db() -> Dict[str, Any]:
+    env_tokens = os.environ.get("ADMIN_TOKENS", "")
+    env_default = [t.strip().upper() for t in env_tokens.split(",") if t.strip()] or DEFAULT_ADMIN_TOKENS
+    return _read_json(CONFIG_FILE, {"admin_tokens": env_default})
+
+def _save_config_db(db: Dict[str, Any]) -> None:
+    _write_json(CONFIG_FILE, db)
+
+def _purge_admin_sessions() -> None:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    stale = [s for s, ts in ADMIN_SESSIONS.items() if now_ts - ts > ADMIN_TTL_SECONDS]
+    for s in stale:
+        ADMIN_SESSIONS.pop(s, None)
+
+def _require_admin(session: Optional[str]) -> None:
+    _purge_admin_sessions()
+    if not session:
+        raise HTTPException(status_code=401, detail="Missing admin session")
+    ts = ADMIN_SESSIONS.get(session)
+    if not ts:
+        raise HTTPException(status_code=401, detail="Invalid admin session")
+    ADMIN_SESSIONS[session] = datetime.now(timezone.utc).timestamp()
+
+class WizardRecord(BaseModel):
+    token: str
+    display_name: str = ""
+    iits_username: str = ""
+    adm_username: str = ""
+    completed: List[str] = Field(default_factory=list)
+    adminCompleted: List[str] = Field(default_factory=list)
+    iits_pw_date: Optional[str] = None
+    adm_pw_date: Optional[str] = None
+    vpn_date: Optional[str] = None
+
+class CredentialPayload(BaseModel):
+    credential: str
+    current: Optional[str] = None
+
+class ConfigPayload(BaseModel):
+    admin_tokens: List[str]
 
 
 # ── User loading ──────────────────────────────────────────────────────────────
@@ -466,6 +550,135 @@ async def smtp_test():
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
+
+
+# ── Wizard/admin server-backed endpoints ─────────────────────────────────────
+@app.get("/admin/auth/status")
+async def admin_auth_status():
+    return {"configured": bool(_auth_db().get("password_hash"))}
+
+
+@app.post("/admin/auth/setup")
+async def admin_auth_setup(payload: CredentialPayload):
+    cred = (payload.credential or "").strip()
+    if len(cred) < 4:
+        raise HTTPException(status_code=400, detail="Credential too short")
+    db = _auth_db()
+    if db.get("password_hash"):
+        if not payload.current:
+            raise HTTPException(status_code=400, detail="Current credential required")
+        if not bcrypt.checkpw(payload.current.encode("utf-8"), db["password_hash"].encode("utf-8")):
+            raise HTTPException(status_code=401, detail="Current credential incorrect")
+    hashed = bcrypt.hashpw(cred.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    _save_auth_db({"password_hash": hashed, "updated_at": _now_iso()})
+    session = secrets.token_urlsafe(24)
+    ADMIN_SESSIONS[session] = datetime.now(timezone.utc).timestamp()
+    audit("admin_auth_setup", detail="Admin credential configured")
+    return {"status": "ok", "session": session}
+
+
+@app.post("/admin/auth/login")
+async def admin_auth_login(payload: CredentialPayload):
+    db = _auth_db()
+    stored = db.get("password_hash")
+    if not stored:
+        raise HTTPException(status_code=400, detail="Admin credential not configured")
+    if not bcrypt.checkpw((payload.credential or "").encode("utf-8"), stored.encode("utf-8")):
+        audit("admin_auth_failed", detail="Incorrect admin credential", status="warn")
+        raise HTTPException(status_code=401, detail="Incorrect credential")
+    session = secrets.token_urlsafe(24)
+    ADMIN_SESSIONS[session] = datetime.now(timezone.utc).timestamp()
+    audit("admin_auth_login", detail="Admin session opened")
+    return {"status": "ok", "session": session}
+
+
+@app.post("/admin/auth/logout")
+async def admin_auth_logout(x_admin_session: Optional[str] = Header(default=None)):
+    if x_admin_session:
+        ADMIN_SESSIONS.pop(x_admin_session, None)
+    return {"status": "ok"}
+
+
+@app.get("/admin/config")
+async def admin_config(x_admin_session: Optional[str] = Header(default=None)):
+    _require_admin(x_admin_session)
+    return _config_db()
+
+
+@app.post("/admin/config")
+async def admin_config_save(payload: ConfigPayload, x_admin_session: Optional[str] = Header(default=None)):
+    _require_admin(x_admin_session)
+    tokens = [t.strip().upper() for t in payload.admin_tokens if t.strip()]
+    _save_config_db({"admin_tokens": tokens, "updated_at": _now_iso()})
+    audit("admin_config_saved", detail=f"Configured admin tokens: {', '.join(tokens) or 'none'}")
+    return {"status": "ok", "admin_tokens": tokens}
+
+
+@app.post("/wizard/progress")
+async def wizard_progress_save(payload: WizardRecord):
+    token = payload.token.strip().upper()
+    if token not in users:
+        raise HTTPException(status_code=404, detail="Unknown token")
+    db = _wizard_db()
+    row = payload.model_dump()
+    row["token"] = token
+    row["updated_at"] = _now_iso()
+    db[token] = row
+    _save_wizard_db(db)
+    audit("wizard_progress_saved", token=token, detail="Wizard profile/progress updated")
+    return {"status": "ok", "record": row}
+
+
+@app.get("/wizard/progress/{token}")
+async def wizard_progress_get(token: str):
+    token = token.strip().upper()
+    if token not in users:
+        raise HTTPException(status_code=404, detail="Unknown token")
+    db = _wizard_db()
+    return db.get(token, {
+        "token": token,
+        "display_name": users[token]["name"],
+        "iits_username": "",
+        "adm_username": "",
+        "completed": [],
+        "adminCompleted": [],
+        "iits_pw_date": None,
+        "adm_pw_date": None,
+        "vpn_date": None,
+    })
+
+
+@app.get("/admin/wizard")
+async def admin_wizard(x_admin_session: Optional[str] = Header(default=None)):
+    _require_admin(x_admin_session)
+    db = _wizard_db()
+    merged = []
+    for token, u in sorted(users.items()):
+        rec = db.get(token, {})
+        merged.append({
+            "token": token,
+            "display_name": rec.get("display_name") or u.get("name", ""),
+            "email": u.get("email", ""),
+            "iits_username": rec.get("iits_username", ""),
+            "adm_username": rec.get("adm_username", ""),
+            "completed": rec.get("completed", []),
+            "adminCompleted": rec.get("adminCompleted", []),
+            "iits_pw_date": rec.get("iits_pw_date"),
+            "adm_pw_date": rec.get("adm_pw_date"),
+            "vpn_date": rec.get("vpn_date"),
+            "updated_at": rec.get("updated_at"),
+        })
+    return {"users": merged}
+
+
+@app.post("/api/onboard/notify")
+async def onboard_notify(request: Request):
+    payload = await request.json()
+    token = str(payload.get("token", "") or "").strip().upper() or None
+    detail = json.dumps(payload, sort_keys=True)[:500]
+    audit("onboard_notify", token=token, detail=detail)
+    return {"status": "ok", "received": payload, "ts": _now_iso()}
 
 # Serve frontend — must be last
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
