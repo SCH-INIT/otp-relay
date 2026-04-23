@@ -35,7 +35,7 @@ ok "Code updated"
 
 # ── 2. Python packages ────────────────────────────────────────────────────────
 info "Updating Python packages..."
-"$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv requests
+"$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv requests bcrypt markdown pyyaml
 ok "Packages updated"
 
 # ── 3. Permissions ────────────────────────────────────────────────────────────
