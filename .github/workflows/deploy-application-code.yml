@@ -1,0 +1,26 @@
+name: Deploy Application Code
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "main.py"
+      - "monitor.py"
+      - "scripts/deploy_application_code.py"
+      - ".github/workflows/deploy-application-code.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-application-code:
+    runs-on: [self-hosted, Linux, ARM64]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Use system Python
+        run: python3 --version
+
+      - name: Validate and deploy application code
+        run: |
+          python3 scripts/deploy_application_code.py
