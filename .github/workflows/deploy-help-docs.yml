@@ -1,0 +1,38 @@
+name: Deploy Help Docs
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "docs/help/**"
+      - "scripts/build_help_docs.py"
+      - ".github/workflows/deploy-help-docs.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-help-docs:
+    runs-on: [self-hosted, Linux, ARM64]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Use system Python
+        run: python3 --version
+
+      - name: Install build dependencies
+        run: |
+          python3 -m pip install --break-system-packages markdown pyyaml
+
+      - name: Build help docs
+        run: |
+          python3 scripts/build_help_docs.py
+
+      - name: Confirm generated files
+        run: |
+          ls -R frontend/help
+          cat frontend/help/manifest.json
+
+      - name: Sync built help docs to live portal
+        run: |
+          rsync -rltvz --delete --no-group --no-owner frontend/help/ /opt/otp-relay/frontend/help/

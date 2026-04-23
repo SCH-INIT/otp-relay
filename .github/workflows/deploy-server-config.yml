@@ -1,0 +1,29 @@
+name: Deploy Server Config
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "install.sh"
+      - "update.sh"
+      - "deploy_users.sh"
+      - "setup_action-runner.sh"
+      - "systemd/*.service"
+      - "nginx/otp-relay.conf.template"
+      - "scripts/deploy_server_config.py"
+      - ".github/workflows/deploy-server-config.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-server-config:
+    runs-on: [self-hosted, Linux, ARM64]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Show Python version
+        run: python3 --version
+
+      - name: Deploy server config
+        run: python3 scripts/deploy_server_config.py

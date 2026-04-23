@@ -1,0 +1,27 @@
+name: Deploy Portal UI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "frontend/app.jsx"
+      - "frontend/index.html"
+      - "frontend/style.css"
+      - "scripts/deploy_portal_ui.py"
+      - ".github/workflows/deploy-portal-ui.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-portal-ui:
+    runs-on: [self-hosted, Linux, ARM64]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Use system Python
+        run: python3 --version
+
+      - name: Deploy UI files incrementally
+        run: |
+          python3 scripts/deploy_portal_ui.py
