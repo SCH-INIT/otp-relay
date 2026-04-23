@@ -15,6 +15,9 @@ srvotp26 (Ubuntu 24.04 VM)
 Portal (user's browser)
    ↓  polls /claim-status every 3 seconds
 OTP appears on screen — no email involved
+
+The same portal also hosts the **RTA Access Wizard**, **Help** section, and **Admin** views.
+RTA onboarding progress is server-backed so reminders and progress persist across devices.
 ```
 
 1. User opens the portal → enters their 2 or 3 character token → clicks **Claim my slot**
@@ -27,36 +30,53 @@ OTP appears on screen — no email involved
 
 A second service (`otp-monitor`) runs alongside the main app. It pings the iPhone every few minutes using ARP and forwards error-level audit events to an IT contact via WhatsApp.
 
-### Queue design
+## Queue design
 
 Only one user is active at a time. This is a deliberate safety constraint: because OTP SMS messages carry no user-identifying information, the server cannot match an incoming SMS to a specific person. Concurrent active users would cause mis-delivery. The 90-second slot window keeps wait times short — a normal flow completes in under 30 seconds.
 
+
 ---
 
+## Update pipeline
+
+Application code, portal UI, Help Docs, and server configuration are deployed through separate GitHub Actions workflows on the Raspberry Pi self-hosted runner.
+
+See [UPDATE-PIPELINE.md](./UPDATE-PIPELINE.md) for deployment flow, workflow triggers, server-config deployment behavior, sudo requirements, and troubleshooting.
 ## Repository Structure
 
 ```
+
 otp-relay/
-├── main.py                  # FastAPI application
-├── monitor.py               # Phone watcher + WhatsApp alert forwarder
-├── install.sh               # Fresh install from this repo
-├── update.sh                # git pull + sync systemd units + restart
-├── deploy_users.sh          # Hot-reload users.xlsx without restarting
-├── test_otp_relay.py        # End-to-end test suite
-├── .env.template            # Config template — copy to .env and fill in
+├── main.py                        # FastAPI application
+├── monitor.py                     # Phone watcher + WhatsApp alert forwarder
+├── install.sh                     # Fresh install from this repo
+├── update.sh                      # Full repo sync + package refresh + service restart
+├── deploy_users.sh                # Hot-reload users.xlsx without restarting
+├── setup_action-runner.sh         # Optional GitHub Actions runner setup helper
+├── test_otp_relay.py              # End-to-end test suite
+├── .env.template                  # Config template — copy to .env and fill in
 ├── .gitignore
 ├── README.md
+├── UPDATE-PIPELINE.md
+├── HELP-DOCS-DEPLOYMENT.md
 ├── frontend/
-│   ├── index.html           # Portal markup (structure only)
-│   ├── style.css            # All styles — INIT design system
-│   └── app.js               # All UI logic — edit this for frontend changes
+│   ├── index.html                 # Portal shell
+│   ├── style.css                  # App styles
+│   ├── app.jsx                    # React UI logic for OTP, Wizard, Help, and Admin views
+│   └── help/                      # Generated Help Docs output
 ├── nginx/
-│   └── otp-relay.conf       # nginx reverse proxy config
+│   └── otp-relay.conf.template    # nginx reverse proxy template rendered during install/deploy
 ├── scripts/
-│   └── generate_sample_users.py
+│   ├── build_help_docs.py         # Builds frontend/help from docs/help
+│   ├── deploy_application_code.py # Incremental backend deploy helper
+│   ├── deploy_portal_ui.py        # Incremental frontend deploy helper
+│   ├── deploy_server_config.py    # Incremental server-config deploy helper
+│   └── generate_sample_users.py   # Optional sample user generator
+├── docs/
+│   └── help/                      # Help Docs markdown source + assets
 └── systemd/
-    ├── otp-relay.service    # Main app systemd unit
-    └── otp-monitor.service  # Monitor systemd unit
+    ├── otp-relay.service          # Main app systemd unit
+    └── otp-monitor.service        # Monitor systemd unit
 ```
 
 > `.env`, `venv/`, and `data/` are intentionally excluded from git.
@@ -70,11 +90,13 @@ otp-relay/
 | Server hostname | `srvotp26.init-db.lan` |
 | Portal URL | `https://srvotp26.init-db.lan` |
 | Service user | `otprelay` (system account, no login) |
-| Monitor user | `root` (required for ARP raw socket access) |
+| Monitor user | `root` (kept as root because ARP probing requires it) |
 | App directory | `/opt/otp-relay/` |
 | Data directory | `/opt/otp-relay/data/` |
 | Audit log | `/opt/otp-relay/data/audit.log` |
 | User list | `/opt/otp-relay/data/users.xlsx` |
+| Wizard progress store | `/opt/otp-relay/data/wizard_progress.json` |
+| Admin auth store | `/opt/otp-relay/data/admin_auth.json` |
 | Python venv | `/opt/otp-relay/venv/` (not in git — created by install.sh) |
 | TLS certificate | `/etc/ssl/otp-relay/server.crt` |
 | TLS key | `/etc/ssl/otp-relay/server.key` |
@@ -99,7 +121,7 @@ otp-relay/
 ├── frontend/
 │   ├── index.html               root:root         644
 │   ├── style.css                root:root         644
-│   └── app.js                   root:root         644
+│   └── app.jsx                  root:root         644
 ├── nginx/
 │   └── otp-relay.conf.template  root:root         644
 ├── systemd/
@@ -108,7 +130,9 @@ otp-relay/
 ├── venv/                        root:root         755  (not in git)
 └── data/                        otprelay:otprelay 700  (not in git)
     ├── users.xlsx               otprelay:otprelay 600
-    └── audit.log                otprelay:otprelay 600
+    ├── audit.log                otprelay:otprelay 600
+    ├── wizard_progress.json     otprelay:otprelay 600
+    └── admin_auth.json          otprelay:otprelay 600
 ```
 
 ---
@@ -117,7 +141,7 @@ otp-relay/
 
 ```bash
 # Clone the repo into the install directory
-sudo git clone git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
+sudo git clone git@github.com:psi1703/otp-relay-psi.git /opt/otp-relay
 cd /opt/otp-relay
 
 # Run the installer
@@ -126,11 +150,57 @@ sudo bash install.sh
 
 `install.sh` creates the venv, sets permissions, generates the TLS cert, configures nginx and both systemd services — all in one shot. It will not overwrite an existing `.env`.
 
+## Optional: GitHub Actions runner setup
+
+If this server should also act as the self-hosted GitHub Actions runner for this repo, you can configure it after the main install completes.
+
+### Before you start
+
+You will need a **fresh GitHub runner registration token**.
+
+Get it from:
+
+1. Open the repository on GitHub: `psi1703/otp-relay-psi`
+2. Go to **Settings**
+3. Open **Actions**
+4. Open **Runners**
+5. Click **New self-hosted runner**
+6. Copy the temporary registration token GitHub shows
+
+**Important:**
+- the token is temporary
+- it expires after a short time
+- if the script says the token is invalid or expired, go back to GitHub and generate a new one
+
+### Run the setup script
+
+```bash
+sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN>
+```
+
+The script will:
+
+- ask you to choose the platform (`ARM64` or `X64`)
+- download the correct GitHub Actions runner package
+- configure the runner for this repo
+- install the runner as a system service
+- start the runner automatically
+
 After running the installer, disable the default nginx site which would otherwise interfere:
 
 ```bash
 sudo rm /etc/nginx/sites-enabled/default
 sudo systemctl reload nginx
+```
+
+### Manual Help Docs build (only if needed)
+
+Help Docs are normally deployed automatically by the GitHub Actions workflow.  
+If you ever need to build them manually on the server, use the app venv Python, not plain `python3`:
+
+```bash
+cd /opt/otp-relay
+./venv/bin/python scripts/build_help_docs.py
 ```
 
 ### After running the installer
@@ -165,6 +235,20 @@ sudo systemctl start otp-monitor
 sudo systemctl status otp-relay otp-monitor
 ```
 
+### Post-install verification
+
+Run these checks after a fresh install:
+
+```bash
+sudo systemctl status otp-relay --no-pager
+sudo systemctl status otp-monitor --no-pager
+sudo nginx -t
+cd /opt/otp-relay
+./venv/bin/python -c "import bcrypt; print('bcrypt OK')"
+./venv/bin/python -c "import markdown, yaml; print('help docs deps OK')"
+ls -l /opt/otp-relay/data
+```
+
 Deploy the user list (place `otp-relay-users.xlsx` in your home directory first):
 
 ```bash
@@ -176,9 +260,13 @@ sudo bash /opt/otp-relay/deploy_users.sh
 ## Updating
 
 ```bash
-sudo bash /opt/otp-relay/update.sh            # pull latest + sync units + restart both services
-sudo bash /opt/otp-relay/update.sh --no-restart  # pull only
+sudo bash /opt/otp-relay/update.sh               # full sync + package refresh + restart both services
+sudo bash /opt/otp-relay/update.sh --no-restart  # full sync without restart
 ```
+
+> **Warning**
+> `update.sh` does a hard reset of `/opt/otp-relay` to `origin/main`.
+> Do not use it if you have uncommitted local changes in the live repo that you need to keep.
 
 `update.sh` automatically detects changes to systemd unit files and re-copies them to `/etc/systemd/system/`, so unit changes deploy without manual steps.
 
@@ -301,6 +389,26 @@ This copies the file, sets correct permissions, and reloads the user list in the
 
 Rows that fail validation are skipped and written to the audit log as `import_skipped` events with the exact row number and reason.
 
+
+## RTA Wizard Storage (server-backed)
+
+The RTA Access Wizard stores profile fields and progress on the server so data follows the user across devices.
+
+Stored in `/opt/otp-relay/data/wizard_progress.json`:
+- token
+- display name
+- `IITS_*` username
+- `ADM_*` username
+- password reset dates / reminder dates
+- VPN reminder date
+- step completion state
+- last updated timestamp
+
+Admin authentication is stored separately in `/opt/otp-relay/data/admin_auth.json`.
+
+> These files are runtime data and are intentionally not tracked in git.
+
+
 ---
 
 ## Exchange SMTP (diagnostics only)
@@ -422,6 +530,9 @@ curl -sk https://srvotp26.init-db.lan/admin/queue | python3 -m json.tool
 
 # All loaded users
 curl -sk https://srvotp26.init-db.lan/admin/users | python3 -m json.tool
+
+# Server-backed RTA wizard progress (admin-auth protected)
+curl -sk https://srvotp26.init-db.lan/admin/wizard
 
 # Test Exchange SMTP connectivity
 curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
