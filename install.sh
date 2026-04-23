@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# =============================================================================
+# =============================================================================+
 # install.sh — Fresh install of OTP Relay from the git repository
 # Ubuntu 24.04 LTS · Exchange SMTP · LAN only
 #
@@ -7,7 +7,7 @@
 #   git clone git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
 #   cd /opt/otp-relay
 #   sudo bash install.sh
-# =============================================================================
+# =============================================================================+
 
 set -euo pipefail
 
@@ -33,14 +33,14 @@ echo -e "${DIM}Ubuntu 24.04 · Exchange SMTP${RESET}\n"
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 
-section "1/7  System packages"
+section "1/8  System packages"
 apt-get update -qq
 apt-get install -y -qq python3.12 python3.12-venv python3-pip nginx openssl arping
 ok "Packages installed"
 
 # ── 2. Service account ────────────────────────────────────────────────────────
 
-section "2/7  Service account"
+section "2/8  Service account"
 if ! id otprelay &>/dev/null; then
   useradd --system --no-create-home --shell /usr/sbin/nologin otprelay
   ok "Created system user: otprelay"
@@ -50,7 +50,7 @@ fi
 
 # ── 3. Data directory ─────────────────────────────────────────────────────────
 
-section "3/7  Data directory"
+section "3/8  Data directory"
 mkdir -p "$INSTALL_DIR/data"
 chown -R otprelay:otprelay "$INSTALL_DIR/data"
 chmod 700 "$INSTALL_DIR/data"
@@ -58,19 +58,26 @@ ok "data/ directory ready"
 
 # ── 4. Python virtual environment ─────────────────────────────────────────────
 
-section "4/7  Python virtual environment"
+section "4/8  Python virtual environment"
 if [[ ! -f "$INSTALL_DIR/venv/bin/uvicorn" ]]; then
   python3.12 -m venv "$INSTALL_DIR/venv"
-  "$INSTALL_DIR/venv/bin/pip" install -q fastapi uvicorn openpyxl python-dotenv requests
+  "$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv bcrypt markdown pyyaml
   ok "venv created and packages installed"
 else
-  "$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv requests
+  "$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv bcrypt markdown pyyaml
   ok "venv already exists — packages updated"
 fi
 
-# ── 5. Configure .env ─────────────────────────────────────────────────────────
+# ── 5. Build Help Docs ────────────────────────────────────────────────────────
 
-section "5/7  Environment configuration"
+section "5/8  Build Help Docs"
+cd "$INSTALL_DIR"
+"$INSTALL_DIR/venv/bin/python" scripts/build_help_docs.py
+ok "Help Docs built"
+
+# ── 6. Configure .env ─────────────────────────────────────────────────────────
+
+section "6/8  Environment configuration"
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   cp "$INSTALL_DIR/.env.template" "$INSTALL_DIR/.env"
   warn ".env created from template — EDIT IT NOW before starting the service:"
@@ -95,7 +102,7 @@ SERVER_HOSTNAME="${SERVER_HOSTNAME:-srvotp26.company.lan}"
 SERVER_IP="${SERVER_IP:-127.0.0.1}"
 PORTAL_URL="https://${SERVER_HOSTNAME}"
 
-section "6/7  Permissions"
+section "7/8  Permissions"
 chown -R root:root "$INSTALL_DIR"
 chmod -R 755 "$INSTALL_DIR"
 find "$INSTALL_DIR" -type f -not -path "$INSTALL_DIR/venv/*" -exec chmod 644 {} \;
@@ -114,7 +121,7 @@ ok "Permissions set"
 
 # ── 7. TLS certificate ────────────────────────────────────────────────────────
 
-section "7/7  TLS + nginx + systemd"
+section "8/8  TLS + nginx + systemd"
 
 if [[ ! -f /etc/ssl/otp-relay/server.crt ]]; then
   mkdir -p /etc/ssl/otp-relay
@@ -185,3 +192,8 @@ echo -e "  Monitor:  sudo journalctl -u otp-monitor -f"
 echo -e "  Test:     python3 $INSTALL_DIR/test_otp_relay.py"
 echo -e "  Update:   sudo bash $INSTALL_DIR/update.sh"
 echo ""
+
+# Optional next step:
+# If this server should also act as a GitHub Actions self-hosted runner,
+# run the following after install completes:
+#   sudo bash /opt/otp-relay/setup_runner.sh <RUNNER_TOKEN>
