@@ -346,3 +346,159 @@ a:hover { text-decoration: underline; }
   .token-char { width: 64px; height: 72px; font-size: 30px; }
   .claim-card, .status-card, .main-panel, .side-card { padding: 20px; }
 }
+
+
+/* RTA wizard floating guide */
+.guide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  pointer-events: none;
+}
+.guide-overlay.open { display: block; }
+.guide-backdrop {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.guide-modal {
+  position: relative;
+  width: min(1040px, calc(100vw - 28px));
+  max-height: calc(100vh - 44px);
+  margin: 22px auto;
+  pointer-events: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: 0 28px 90px rgba(15, 23, 42, .28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.guide-modal-head {
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+.guide-modal-title {
+  margin: 4px 0 6px;
+  font-size: 26px;
+  line-height: 1.15;
+}
+.guide-close {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+.guide-close:hover { background: var(--primary-50); color: var(--primary-900); }
+.guide-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  overflow: visible;
+}
+.guide-tab {
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--secondary-800);
+  border-radius: 999px;
+  padding: 9px 13px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  cursor: pointer;
+}
+.guide-tab.active {
+  background: var(--primary-800);
+  border-color: var(--primary-800);
+  color: white;
+}
+.guide-modal-body {
+  padding: 22px 24px 26px;
+  overflow: auto;
+  min-height: 220px;
+}
+.guide-modal-body .guide-block { margin-top: 0; }
+.guide-stack { display: grid; gap: 14px; }
+.guide-image-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }
+.guide-shot { margin: 0; border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--surface-soft); }
+.guide-shot img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; background: white; }
+.guide-shot figcaption { padding: 10px 12px; font-size: 12px; line-height: 1.45; color: var(--muted); border-top: 1px solid var(--border); }
+.guide-modal-body .inline-info,
+.guide-modal-body .inline-note { font-size: 14px; }
+.guide-modal-body .kv {
+  border-bottom: 1px dashed var(--border);
+  padding: 8px 0;
+}
+.guide-modal-body .kv:last-child { border-bottom: 0; }
+.guide-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+}
+.guide-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 700;
+}
+.guide-modal-footer .btn:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+@media (max-width: 720px) {
+  .guide-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    margin: 8px auto;
+    border-radius: 18px;
+  }
+  .guide-modal-head,
+  .guide-tabs,
+  .guide-modal-body,
+  .guide-modal-footer { padding-left: 16px; padding-right: 16px; }
+  .guide-modal-title { font-size: 22px; }
+  .guide-image-grid { grid-template-columns: 1fr; }
+  .guide-shot img { max-height: 300px; }
+  .guide-modal-footer { position: sticky; bottom: 0; }
+}
+
+/* RTA wizard guide dragging */
+.guide-drag-handle {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.guide-drag-handle .guide-close {
+  cursor: pointer;
+}
+.guide-dragging,
+.guide-dragging * {
+  cursor: move !important;
+  user-select: none !important;
+}
