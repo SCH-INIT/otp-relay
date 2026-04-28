@@ -1,181 +1,148 @@
-# OTP Relay Portal — Help Docs Auto-Deploy Guide
+# OTP Relay Portal — Help Docs and RTA Wizard Assets Deployment Guide
 
-This guide documents the **Help Docs automation** built for `psi1703/otp-relay-psi`.
+This guide documents the Help Docs / guide-assets automation for `SCH-INIT/otp-relay`.
 
-It is meant to live **alongside** the main project `README.md`, not replace it.
+The normal portal navigation no longer exposes a standalone **Help** section. The **RTA Wizard** is now the primary user-facing guide. Its floating guide overlay and user-facing instructions are maintained in:
+
+```bash
+frontend/app.jsx
+```
+
+The Help Docs pipeline still matters because it publishes screenshots and optional rendered reference pages under `/help/`. The RTA Wizard overlay uses screenshots from:
+
+```text
+/help/assets/<filename>
+```
 
 ---
 
-## What this guide covers
+## 1. What this guide covers
 
 This document explains:
 
-- how SSH access for GitHub was set up on the Raspberry Pi
-- how the **deploy key** was added to GitHub
-- how the **self-hosted GitHub Actions runner** was installed and configured
-- how the Help Docs workflow works
-- where source files, generated files, and live deployed files live
-- how to safely add new markdown pages and PNG screenshots
+- how the RTA Wizard guide and Help Docs pipeline now relate to each other
+- where user-facing guide text, screenshot assets, generated files, and live files live
+- how the self-hosted GitHub Actions runner rebuilds and deploys guide assets
+- how to safely add or replace screenshots used by the wizard overlay
+- how to maintain optional generated Help reference pages
 - how to troubleshoot common deployment failures
 
 ---
 
-## Recommended location in the repo
-
-Save this file as one of these:
-
-- `HELP-DOCS-AUTODEPLOY.md`
-- `README-HELP-DOCS-AUTODEPLOY.md`
-- `docs/HELP-DOCS-AUTODEPLOY.md`
-
-Then add a short pointer in the main `README.md`, for example:
-
-```md
-## Help Docs auto-deploy
-
-Help Docs are built from `docs/help/` and deployed automatically on the Raspberry Pi by a self-hosted GitHub Actions runner.
-
-See [HELP-DOCS-AUTODEPLOY.md](./HELP-DOCS-AUTODEPLOY.md) for setup, deployment flow, SSH/deploy-key steps, runner configuration, and troubleshooting.
-```
-
----
-
-# 1. Architecture
-
-The setup has **three separate layers**:
-
-## 1. GitHub repo — source of truth
-The GitHub repo stores:
-
-- markdown source files in `docs/help/`
-- screenshot/image assets in `docs/help/assets/`
-- the build script in `scripts/build_help_docs.py`
-- the workflow in `.github/workflows/deploy-help-docs.yml`
-
-## 2. GitHub Actions runner on the Pi
-The self-hosted runner:
-
-- checks out the repo into its own temporary workspace
-- runs the build script
-- syncs the generated output into the live portal path
-
-Typical runner workspace:
-
-```bash
-~/actions-runner/_work/otp-relay-psi/otp-relay-psi/
-```
-
-## 3. Live deployed portal
-The live app is served from:
-
-```bash
-/opt/otp-relay
-```
-
-The Help Docs live deployment target is:
-
-```bash
-/opt/otp-relay/frontend/help/
-```
-
----
-
-# 2. Final operating model
+## 2. Current operating model
 
 The current recommended workflow is:
 
-1. Edit Help Docs directly in the **GitHub repo**
-2. Push to `main`
-3. GitHub Actions runs on the **self-hosted Pi runner**
-4. Docs are rebuilt automatically
-5. The generated output is copied into the live portal
+1. Edit user-facing RTA Wizard guide text in `frontend/app.jsx`.
+2. Add or replace wizard screenshots in `docs/help/assets/`.
+3. Edit markdown in `docs/help/` only when optional rendered reference/fallback pages need updates.
+4. Push to `main`.
+5. GitHub Actions runs on the self-hosted Raspberry Pi runner.
+6. `scripts/build_help_docs.py` rebuilds `/frontend/help/` output.
+7. The workflow syncs the generated output into `/opt/otp-relay/frontend/help/`.
 
-This means you do **not** need extra manual repo clones on the Pi for normal operation.
-
-The only important Pi locations are:
-
-```bash
-~/actions-runner
-/opt/otp-relay
-```
+The standalone Help section is not part of the normal user navigation anymore. The RTA Wizard is the main user-facing guide surface.
 
 ---
 
-# 3. Folder layout
+## 3. Source of truth by content type
 
-## Source files
+| Content type | Source of truth | Notes |
+|---|---|---|
+| User-facing wizard steps and guide overlay copy | `frontend/app.jsx` | Primary content users see in the RTA Wizard |
+| Wizard screenshots | `docs/help/assets/` | Served after build as `/help/assets/<filename>` |
+| Optional Help reference markdown | `docs/help/*.md` | Generated into fallback/reference HTML pages |
+| Generated Help output | `frontend/help/` | Generated; do not author here directly |
+| Live deployed Help output | `/opt/otp-relay/frontend/help/` | Live `/help/` folder served by the portal |
+
+---
+
+## 4. Folder layout
+
+### User-facing RTA Wizard guide
+
+```bash
+frontend/app.jsx
+```
+
+This file contains the wizard step data and floating guide overlay content. Update this file when the text that users see inside the wizard needs to change.
+
+### Source markdown reference pages
 
 ```bash
 docs/help/
 ```
 
-Contains the markdown source pages.
+These are optional reference/fallback pages. They are no longer the primary user-facing guide copy.
 
-## Source images
+### Source images
 
 ```bash
 docs/help/assets/
 ```
 
-Contains PNG screenshots and any other Help Docs images.
+This is the source of truth for screenshots used by both the RTA Wizard overlay and optional generated Help pages.
 
-## Generated output
+### Generated output
 
 ```bash
 frontend/help/
 ```
 
-This is generated by the build script. Do **not** treat it as the source of truth.
+This folder is generated by `scripts/build_help_docs.py`. Do not manually maintain content here.
 
-## Live deployed output
+### Live deployed output
 
 ```bash
 /opt/otp-relay/frontend/help/
 ```
 
-This is what the live portal reads.
+This folder is served by the portal as `/help/`. The RTA Wizard overlay primarily consumes `/help/assets/` from here.
 
 ---
 
-# 4. Rules for screenshots and images
+## 5. Rules for screenshots and images
 
-## Source of truth for images
-All screenshots must be added to:
+All screenshots used by the RTA Wizard overlay or optional Help reference pages must be added to:
 
 ```bash
 docs/help/assets/
 ```
 
-Do **not** manually maintain screenshots in:
+Do not manually maintain screenshots in:
 
 ```bash
 frontend/help/assets/
+/opt/otp-relay/frontend/help/assets/
 ```
 
-That folder is generated automatically and may be overwritten on every build/deploy.
+Those folders are generated/deployed outputs and may be overwritten by the next build.
 
-## Correct markdown image syntax
+### Referencing images from the RTA Wizard
 
-Use image references like this inside the markdown pages:
+In `frontend/app.jsx`, reference wizard screenshots like this:
+
+```js
+'/help/assets/example.png'
+```
+
+### Referencing images from optional markdown pages
+
+In `docs/help/*.md`, reference screenshots like this:
 
 ```md
 ![Description](assets/example.png)
 ```
 
-During the build, those paths are converted into:
+During the build, markdown image paths are converted into:
 
 ```text
 /help/assets/example.png
 ```
 
-in the generated HTML.
-
-## Important consequence
-If a PNG exists only in the live deployed folder or only in `frontend/help/assets/`, it can be deleted by deployment. Always keep the source PNG in `docs/help/assets/` and commit it to GitHub.
-
 ---
 
-# 5. Build script behavior
+## 6. Build script behavior
 
 Build script:
 
@@ -185,14 +152,14 @@ scripts/build_help_docs.py
 
 It does the following:
 
-1. Reads markdown files from `docs/help/`
-2. Deletes and recreates `frontend/help/assets/`
-3. Copies all files from `docs/help/assets/` into `frontend/help/assets/`
-4. Converts markdown into rendered HTML files in `frontend/help/rendered/`
-5. Generates `frontend/help/manifest.json`
-6. Rewrites image paths to `/help/assets/...`
+1. Reads optional markdown reference pages from `docs/help/`.
+2. Deletes and recreates `frontend/help/assets/`.
+3. Copies all files from `docs/help/assets/` into `frontend/help/assets/`.
+4. Converts markdown into optional rendered HTML files in `frontend/help/rendered/`.
+5. Generates `frontend/help/manifest.json`.
+6. Rewrites markdown image paths to `/help/assets/...`.
 
-So the source flow is:
+Source flow:
 
 ```text
 docs/help/*.md + docs/help/assets/*
@@ -208,222 +175,11 @@ workflow sync
 /opt/otp-relay/frontend/help/
 ```
 
----
-
-# 6. GitHub SSH setup on the Raspberry Pi
-
-This section documents the GitHub SSH setup used so the Pi can authenticate to the repo.
-
-## 6.1 Generate an SSH key on the Pi
-
-On the Pi:
-
-```bash
-ssh-keygen -t ed25519 -C "otp-relay-pi"
-```
-
-This typically creates:
-
-```bash
-~/.ssh/id_ed25519
-~/.ssh/id_ed25519.pub
-```
-
-## 6.2 View the public key
-
-```bash
-cat ~/.ssh/id_ed25519.pub
-```
-
-Copy the full line.
-
-## 6.3 Add GitHub to known hosts
-
-```bash
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-ssh-keyscan github.com >> ~/.ssh/known_hosts
-chmod 644 ~/.ssh/known_hosts
-```
-
-## 6.4 Optional SSH config
-To force the key:
-
-```sshconfig
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/id_ed25519
-  IdentitiesOnly yes
-```
-
-Save that as:
-
-```bash
-~/.ssh/config
-```
-
-and then run:
-
-```bash
-chmod 600 ~/.ssh/config
-```
-
-## 6.5 Test SSH
-
-```bash
-ssh -T git@github.com
-```
-
-Expected success message:
-
-```text
-Hi <repo-or-user>! You've successfully authenticated, but GitHub does not provide shell access.
-```
+The wizard overlay does not read markdown directly. It reads guide copy from `frontend/app.jsx` and images from `/help/assets/`.
 
 ---
 
-# 7. Deploy key setup in GitHub
-
-The Pi used a **deploy key** for this repo.
-
-## 7.1 Open the repo in GitHub
-Go to:
-
-**Repository → Settings → Deploy keys → Add deploy key**
-
-## 7.2 Fill in the form
-
-- **Title:** something clear like `raspberry-pi-help-docs`
-- **Key:** paste the contents of `~/.ssh/id_ed25519.pub`
-
-## 7.3 Very important
-Enable:
-
-- **Allow write access**
-
-Without write access, the Pi can fetch/pull but cannot push.
-
----
-
-## Screenshot checkpoint
-Add a screenshot here of the GitHub page:
-
-**Settings → Deploy keys → Add deploy key**
-
-Suggested filename:
-
-```text
-docs/help/assets/github-deploy-key-form.png
-```
-
-Suggested insertion point if you later add screenshots to this guide:
-
-```md
-![GitHub deploy key form](docs/help/assets/github-deploy-key-form.png)
-```
-
----
-
-# 8. Self-hosted runner setup on the Pi
-
-## 8.1 Open the repo runner page
-In GitHub:
-
-**Repository → Settings → Actions → Runners → New runner**
-
-Choose:
-
-- **Runner image:** Linux
-- **Architecture:** ARM64 (for Raspberry Pi if applicable)
-
-GitHub generates the exact setup commands.
-
-## 8.2 Create the runner directory on the Pi
-
-```bash
-mkdir -p ~/actions-runner
-cd ~/actions-runner
-```
-
-## 8.3 Download and extract the runner
-Use the exact commands GitHub provides. They look like:
-
-```bash
-curl -o actions-runner-linux-arm64-<version>.tar.gz -L <download-url>
-tar xzf ./actions-runner-linux-arm64-<version>.tar.gz
-```
-
-## 8.4 Configure the runner
-Run the registration command GitHub provides, for example:
-
-```bash
-./config.sh --url https://github.com/psi1703/otp-relay-psi --token <temporary-token>
-```
-
-### Recommended answers during setup
-
-- **Runner group:** `Default`
-- **Runner name:** `raspberrypi` (or similar)
-- **Extra labels:** `update-docs`
-- **Work folder:** press Enter for the default `_work`
-
-Do **not** point the runner work folder at your live repo or at `/opt/otp-relay`. Use the runner-managed `_work` folder.
-
-## 8.5 Install the runner as a service
-
-```bash
-sudo ./svc.sh install
-sudo ./svc.sh start
-sudo ./svc.sh status
-```
-
-## 8.6 Confirm in GitHub
-Back in:
-
-**Settings → Actions → Runners**
-
-the runner should show as **Idle**.
-
----
-
-## Screenshot checkpoint
-Add a screenshot here of:
-
-- the runner registration page
-- the runner showing as **Idle**
-
-Suggested filenames:
-
-```text
-docs/help/assets/github-runner-new-runner.png
-docs/help/assets/github-runner-idle.png
-```
-
----
-
-# 9. Runner labels
-
-The runner was configured with labels such as:
-
-- `self-hosted`
-- `Linux`
-- `ARM64`
-- `update-docs`
-
-Your workflow `runs-on` labels must match the actual runner labels.
-
-Recommended:
-
-```yaml
-runs-on: [self-hosted, Linux, ARM64, update-docs]
-```
-
-If you keep the YAML lowercase for `linux`, GitHub usually still matches its standard label, but the safest approach is to mirror the labels shown on the runner page exactly.
-
----
-
-# 10. Workflow file
+## 7. Recommended workflow file
 
 Workflow file:
 
@@ -431,10 +187,10 @@ Workflow file:
 .github/workflows/deploy-help-docs.yml
 ```
 
-Recommended version:
+Recommended workflow name and job name:
 
 ```yaml
-name: Deploy Help Docs
+name: Deploy Help Assets
 
 on:
   push:
@@ -446,8 +202,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy-help-docs:
-    runs-on: [self-hosted, Linux, ARM64, update-docs]
+  deploy-help-assets:
+    runs-on: [self-hosted, Linux, ARM64]
 
     steps:
       - name: Checkout repo
@@ -460,7 +216,7 @@ jobs:
         run: |
           python3 -m pip install --break-system-packages markdown pyyaml
 
-      - name: Build help docs
+      - name: Build help docs and assets
         run: |
           python3 scripts/build_help_docs.py
 
@@ -469,67 +225,132 @@ jobs:
           ls -R frontend/help
           cat frontend/help/manifest.json
 
-      - name: Sync built help docs to live portal
+      - name: Sync built help output to live portal
         run: |
           rsync -rltvz --delete --no-group --no-owner frontend/help/ /opt/otp-relay/frontend/help/
 ```
 
----
-
-# 11. Why `actions/checkout@v5`
-
-Use:
-
-```yaml
-uses: actions/checkout@v5
-```
-
-instead of `@v4`, to stay aligned with GitHub’s Node 24 direction and avoid Node 20 deprecation warnings.
+The workflow can keep the filename `deploy-help-docs.yml`. The name/job labels can be updated to make it clear that this workflow now deploys guide assets as well as optional Help pages.
 
 ---
 
-# 12. Why `rsync --delete` is used
+## 8. Why `rsync --delete` is used
 
-This deployment uses:
+The deployment uses:
 
 ```bash
 rsync -rltvz --delete --no-group --no-owner frontend/help/ /opt/otp-relay/frontend/help/
 ```
 
-## Meaning
-This makes the live help-docs folder match the generated output exactly.
+This makes the live `/help/` output match the generated output exactly.
 
 That is good because:
-- deleted markdown pages disappear from the portal
+
+- deleted optional markdown pages disappear from generated reference output
 - renamed assets do not leave old junk behind
 - the live folder stays clean
+- the RTA Wizard overlay only sees current screenshots from `/help/assets/`
 
-## Important warning
-If a file is only placed manually in the live folder, and not generated from the repo, it may be deleted on the next deployment.
-
-That is why:
-- markdown must live in `docs/help/`
-- images must live in `docs/help/assets/`
+Important warning: if a file is only placed manually in the live folder and not generated from the repo, it will be deleted on the next deployment.
 
 ---
 
-# 13. Permissions required for deployment
+## 9. Day-to-day usage
 
-The runner user must be able to write into:
+### Update user-facing RTA Wizard guide copy
+
+Edit:
+
+```bash
+frontend/app.jsx
+```
+
+Keep the wizard copy concise and aligned with screenshots under `/help/assets/`.
+
+### Add or replace a wizard screenshot
+
+1. Put the PNG in:
+
+   ```bash
+   docs/help/assets/
+   ```
+
+2. Reference it from `frontend/app.jsx`:
+
+   ```js
+   '/help/assets/example.png'
+   ```
+
+3. Rebuild locally if you want to verify before pushing:
+
+   ```bash
+   python3 scripts/build_help_docs.py
+   ```
+
+4. Commit and push.
+
+### Add or update an optional Help reference page
+
+1. Create or edit a markdown file in `docs/help/`.
+2. Keep YAML frontmatter at the top:
+
+   ```md
+   ---
+   title: Example Page
+   section: Example
+   order: 20
+   slug: example-page
+   ---
+   ```
+
+3. Reference images using `assets/<filename>`.
+4. Commit and push.
+
+---
+
+## 10. Manual verification commands on the Pi
+
+Check the live deployed help/asset folder:
+
+```bash
+ls -R /opt/otp-relay/frontend/help
+```
+
+Check that a specific screenshot is deployed:
+
+```bash
+ls -l /opt/otp-relay/frontend/help/assets/<filename>
+```
+
+Check the public URL path from the Pi:
+
+```bash
+curl -s -o /dev/null -w "asset=%{http_code}\n" http://127.0.0.1:8000/help/assets/<filename>
+```
+
+Check generated manifest:
+
+```bash
+curl -s http://127.0.0.1:8000/help/manifest.json
+```
+
+Check the runner workspace output:
+
+```bash
+ls -R ~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os/frontend/help
+```
+
+---
+
+## 11. Permissions required for deployment
+
+The runner user, normally `initbox`, must be able to write into:
 
 ```bash
 /opt/otp-relay/frontend/help/
 ```
 
-If the workflow fails with:
-
-- `Permission denied`
-- `Operation not permitted`
-- `rsync error code 23`
-
-then the runner lacks permissions for the destination folder.
-
-## Typical fix
+This is normally handled by `install.sh`. If permissions need to be restored manually:
 
 ```bash
 sudo chown -R initbox:initbox /opt/otp-relay/frontend/help
@@ -537,217 +358,86 @@ find /opt/otp-relay/frontend/help -type d -exec chmod 755 {} \;
 find /opt/otp-relay/frontend/help -type f -exec chmod 644 {} \;
 ```
 
-Adjust `initbox` if your runner runs under a different user.
+If the workflow fails with `Permission denied`, `Operation not permitted`, or `rsync error code 23`, run the commands above and re-trigger the workflow.
 
 ---
 
-# 14. Where the portal reads the docs from
+## 12. Troubleshooting
 
-The frontend fetches:
+### Workflow ran but wizard screenshots did not change
 
-```text
-/help/manifest.json
-```
-
-and then loads generated HTML pages from:
-
-```text
-/help/rendered/<slug>.html
-```
-
-Image URLs are loaded from:
-
-```text
-/help/assets/<filename>
-```
-
-So the live source that matters is:
-
-```bash
-/opt/otp-relay/frontend/help/
-```
-
----
-
-# 15. Day-to-day usage
-
-## Add a new Help Doc page
-
-1. Create a new markdown file in `docs/help/`
-2. Add YAML frontmatter like:
-
-```md
----
-title: Example Page
-section: Example
-order: 20
-slug: example-page
----
-
-# Example Page
-
-Content goes here.
-```
-
-3. Commit and push to `main`
-
-## Add a new image
-
-1. Put the PNG in:
-
-```bash
-docs/help/assets/
-```
-
-2. Reference it in markdown:
-
-```md
-![Example screenshot](assets/example.png)
-```
-
-3. Commit and push
-
-## Update the build logic
-
-Edit:
-
-```bash
-scripts/build_help_docs.py
-```
-
-and push.
-
-## Update deployment behavior
-
-Edit:
-
-```bash
-.github/workflows/deploy-help-docs.yml
-```
-
-and push.
-
----
-
-# 16. Manual verification commands on the Pi
-
-## Check the live deployed help docs
-
-```bash
-ls -R /opt/otp-relay/frontend/help
-```
-
-## Check the runner workspace output
-
-```bash
-ls -R ~/actions-runner/_work/otp-relay-psi/otp-relay-psi/frontend/help
-```
-
-## Search for a phrase in the live deployed docs
-
-```bash
-grep -R "some text from your doc" -n /opt/otp-relay/frontend/help
-```
-
-## Search for the same phrase in the runner workspace
-
-```bash
-grep -R "some text from your doc" -n ~/actions-runner/_work/otp-relay-psi/otp-relay-psi/frontend/help
-```
-
-If the runner workspace is updated but the live folder is not, the sync step is failing.
-
----
-
-# 17. Troubleshooting
-
-## Problem: workflow ran but portal did not change
 Check:
 
-- the workflow on GitHub includes the sync step
-- the runner log shows the sync step actually ran
-- the destination path is correct
-- the runner has write permission to `/opt/otp-relay/frontend/help/`
+- the screenshot is committed under `docs/help/assets/`
+- `scripts/build_help_docs.py` copied it into `frontend/help/assets/`
+- the workflow sync step ran successfully
+- `/opt/otp-relay/frontend/help/assets/<filename>` exists
+- the screenshot path in `frontend/app.jsx` exactly matches `/help/assets/<filename>`
+- the browser is not showing cached content
 
-## Problem: PNG screenshots disappeared
-Cause:
-- `rsync --delete` removed files that were not present in the generated source tree
+### PNG screenshots disappeared
+
+Cause: `rsync --delete` removed files that were not present in the generated source tree.
 
 Fix:
+
 - make sure all screenshots are committed in `docs/help/assets/`
 - do not treat `frontend/help/assets/` or `/opt/otp-relay/frontend/help/assets/` as hand-maintained storage
 
-## Problem: workflow shows permission errors
-Typical messages:
-- `Permission denied`
-- `Operation not permitted`
-- `rsync error code 23`
+### Markdown changed but wizard text did not change
 
-Fix:
-- correct ownership/permissions of `/opt/otp-relay/frontend/help/`
+Markdown is no longer the primary source for the RTA Wizard overlay. User-facing wizard text lives in:
 
-## Problem: markdown changed but portal still shows old content
-Check whether:
+```bash
+frontend/app.jsx
+```
+
+If you expected an optional generated reference page to change, check whether:
+
 - the runner workspace contains the new text
 - the live deployed folder contains the new text
 - the browser is showing cached content
 
-A private/incognito refresh is a good quick check.
+### Runner shows Offline in GitHub
 
----
-
-# 18. Suggested screenshot plan for maximum clarity
-
-If you want this guide to be very visual, add these screenshots later:
-
-1. **GitHub → Settings → Deploy keys → Add deploy key**
-2. **GitHub → Settings → Actions → Runners → New runner**
-3. **GitHub runner page showing the runner Idle**
-4. **Actions page showing a successful Deploy Help Docs run**
-5. **Repo tree showing `docs/help/`, `docs/help/assets/`, `frontend/help/`, and `.github/workflows/`**
-6. **Portal page showing updated Help Docs and images**
-
-Suggested asset folder for this guide:
+Check the runner service:
 
 ```bash
-docs/help/assets/
+sudo systemctl status actions.runner.*.service
+sudo journalctl -u actions.runner.*.service -n 50
 ```
 
-Suggested file names:
+Restart if needed:
 
-```text
-github-deploy-key-form.png
-github-runner-new-runner.png
-github-runner-idle.png
-github-actions-success.png
-repo-help-docs-tree.png
-portal-help-docs-live.png
+```bash
+sudo systemctl restart actions.runner.*.service
 ```
 
 ---
 
-# 19. Operational rules
+## 13. Operational rules
 
-- GitHub repo is the source of truth
-- Runner workspace is temporary build space
-- `/opt/otp-relay` is the live deployment target
-- never manually maintain source docs in `frontend/help/`
-- never manually maintain source screenshots in `frontend/help/assets/`
-- always store source markdown in `docs/help/`
-- always store source images in `docs/help/assets/`
+- `frontend/app.jsx` is the source of truth for user-facing RTA Wizard guide text.
+- `docs/help/assets/` is the source of truth for wizard and reference screenshots.
+- `docs/help/*.md` contains optional Help reference/fallback pages.
+- `frontend/help/` is generated output; do not manually author content there.
+- `/opt/otp-relay/frontend/help/` is live deployed output; do not manually author content there.
+- Store all source images in `docs/help/assets/`.
+- Keep screenshot filenames stable once referenced from `frontend/app.jsx`.
 
 ---
 
-# 20. Summary
+## 14. Summary
 
-This setup now supports:
+This setup supports:
 
-- GitHub-based Help Docs editing
-- automatic Help Docs build on the Raspberry Pi
-- automatic live deployment to the portal
-- managed screenshot/image deployment
-- a clean separation between source files, build output, and deployed output
+- RTA Wizard guide copy maintained in `frontend/app.jsx`
+- screenshot assets maintained in `docs/help/assets/`
+- optional Help reference pages maintained in `docs/help/`
+- automatic Help Docs / guide-assets build on the Raspberry Pi
+- automatic live deployment to `/opt/otp-relay/frontend/help/`
+- a clean separation between source files, generated output, and live deployed output
 
-The key principle is simple:
+Key principle:
 
-**Edit in GitHub → runner builds on the Pi → live portal updates automatically**
+**Edit wizard copy in `frontend/app.jsx` and images in `docs/help/assets/` → runner builds on the Pi → live portal assets update automatically.**
