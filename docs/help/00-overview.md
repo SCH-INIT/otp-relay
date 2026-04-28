@@ -7,9 +7,22 @@ slug: overview
 
 # RTA Servers Access Guide
 
-This section provides a single entry point for all RTA access topics.
+The primary user-facing guide is now the **RTA Wizard** inside the portal.
 
-## Topics
+The generated Help pages remain as reference/fallback material and as the source pipeline for screenshots served under `/help/assets/`.
+
+For normal users, keep the RTA Wizard instructions in `frontend/app.jsx` aligned with these reference notes.
+
+## Current user-facing flow
+
+1. Open the portal.
+2. Go to **RTA Wizard**.
+3. Use **View guide** on each wizard step.
+4. Follow the floating guide overlay without leaving the wizard.
+
+## Reference topics
+
+These generated pages can still be used as source/reference material:
 
 - New user onboarding
 - Reset RTA account password
@@ -23,17 +36,9 @@ This section provides a single entry point for all RTA access topics.
 - Terminal Server access guide
 - Important notes and tips
 
-## Recommended reading order for new users
-
-1. New user onboarding
-2. Reset RTA password
-3. Configure Oracle Authenticator
-4. Request RDP / SFTP / PAM access
-5. Install RTA VPN
-6. Install WinSCP
-7. Use PAM
-8. Notes and tips
-
 ## Maintainers
 
-Keep this page brief. Put detailed steps in the topic pages and keep screenshots in `docs/help/assets/`.
+Keep this page brief. Put detailed reference steps in the topic pages and keep screenshots in `docs/help/assets/`.
+
+For user-facing wizard text, update `frontend/app.jsx`.
+For wizard screenshots, add or replace images in `docs/help/assets/`, rebuild the generated output, and reference the files from `frontend/app.jsx` using `/help/assets/<filename>`.
