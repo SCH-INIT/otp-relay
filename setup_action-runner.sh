@@ -95,7 +95,7 @@ RUNNER_HOME="$(getent passwd "${RUNNER_USER}" | cut -d: -f6)"
 [[ -z "${RUNNER_HOME}" ]] && { fail "Could not determine home directory for ${RUNNER_USER}"; exit 1; }
 
 RUNNER_DIR="${RUNNER_HOME}/actions-runner"
-REPO_URL="https://github.com/psi1703/otp-relay-psi"
+REPO_URL="https://github.com/SCH-INIT/otp-relay"
 RUNNER_VERSION="2.325.0"
 HOST_SHORT="$(hostname -s)"
 RUNNER_NAME="${HOST_SHORT}"
