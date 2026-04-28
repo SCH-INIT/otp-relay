@@ -1,8 +1,33 @@
-# Help doc assets
+# Help and wizard guide assets
 
-Place screenshots and images for the help pages in this folder.
+Place screenshots and images for the RTA Wizard guide overlay and optional generated Help pages in this folder.
 
-Suggested filenames:
+These assets are copied into `frontend/help/assets/` by `scripts/build_help_docs.py` and are served by the portal from:
+
+```text
+/help/assets/<filename>
+```
+
+The RTA Wizard floating guide overlay in `frontend/app.jsx` also uses these files directly through `/help/assets/<filename>`.
+
+## When adding or replacing wizard screenshots
+
+1. Add the source PNG here.
+2. Rebuild with:
+
+   ```bash
+   python3 scripts/build_help_docs.py
+   ```
+
+3. Reference the generated asset from `frontend/app.jsx` using:
+
+   ```js
+   '/help/assets/<filename>'
+   ```
+
+4. Do not manually edit or copy files into `frontend/help/assets/`; that folder is generated and may be overwritten.
+
+## Suggested filenames
 
 - otp-claim-slot.png
 - otp-waiting-room.png
