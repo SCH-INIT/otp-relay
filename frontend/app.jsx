@@ -1,4 +1,6 @@
-const { useEffect, useMemo, useState } = React;
+const { useEffect, useMemo, useState, useRef } = React;
+
+const HELP_ASSET = '/help/assets/';
 
 const CONFIG = {
   CLAIM_EXPIRY_SEC: 90,
@@ -44,14 +46,24 @@ const STEPS = [
     details: [
       { type: 'info', text: 'Complete the official RTA Access Request form and attach the supporting documents.' },
       { type: 'list', title: 'What to do', items: [
-        'Fill the latest access request form.',
+        'Fill the yellow boxes in the RTA new-user access request form.',
         'Sign the document and save it as PDF.',
         'Email it to Jathin and copy Amer + Christian if needed.',
+        'Attach the completed form and add your signature or name at the end of the email.',
         'Ajith must also send the employee ID copy in PDF to Mustafa.'
+      ]},
+      { type: 'list', title: 'After submission', items: [
+        'Jathin applies for the RTA account.',
+        'Jathin shares the IITS username once the account is ready.',
+        'Jathin informs Amer so the ADM and PAM onboarding path can continue.',
+        'Full onboarding can take roughly 2-3 weeks.'
       ]},
       { type: 'links', title: 'Useful links', items: [
         { label: 'RTA Access Requests (SharePoint)', href: 'https://initse.sharepoint.com/:f:/r/sites/RTAinternal/Shared%20Documents/RTA%20Documents/PAM/RTA%20Access%20Requests' },
         { label: 'Email template to Jathin', href: 'mailto:jprakash@initse.com?cc=cschilling@initse.com;adarwich@initse.com&subject=RTA-NG-2024%20Request%20RTA%20User%20Account' }
+      ]},
+      { type: 'images', title: 'Screenshots', images: [
+        { src: HELP_ASSET + 'new-user-onboarding-sequence.png', alt: 'New user onboarding sequence', caption: 'End-to-end flow for the RTA new-user onboarding request.' }
       ]}
     ]
   },
@@ -60,7 +72,12 @@ const STEPS = [
     adminLabel: 'Jathin creates the IITS account',
     summary: 'Jathin applies for your RTA account in the RTA system and shares the IITS username with you.',
     details: [
-      { type: 'info', text: 'Jathin applies for your RTA account and notifies you once the IITS username is ready.' }
+      { type: 'info', text: 'Jathin applies for your RTA account and notifies you once the IITS username is ready.' },
+      { type: 'list', title: 'What you should expect', items: [
+        'No OTP action is needed during this admin-owned step.',
+        'Wait for the IITS username in the format IITS_*USERNAME*.',
+        'Save the username in the wizard when it arrives so later steps stay clear.'
+      ]}
     ]
   },
   {
@@ -73,21 +90,24 @@ const STEPS = [
         'ITD approval: Siby.',
         'SMD approval: Ahmed Jarrah.',
         'After approvals, PAM support is emailed with the chain attached.'
-      ]}
+      ]},
+      { type: 'info', text: 'This is an admin-owned step. Users only need to wait until Amer confirms the ADM account and PAM onboarding status.' }
     ]
   },
   {
     id: 'save_iits', title: 'Save Your IITS Username', owner: 'user', icon: '👤', time: '2 min', gate: ['account_creation'],
     summary: 'Once Jathin sends you the IITS username, save it here for later use.',
     details: [
-      { type: 'info', text: 'You will use the IITS account for VPN login, password resets, and OTP-related RTA access.' }
+      { type: 'info', text: 'You will use the IITS account for VPN login, password resets, Oracle Authenticator, VPN, and OTP-related RTA access.' },
+      { type: 'warn', text: 'Save only the username here. Do not store passwords in the portal.' }
     ]
   },
   {
     id: 'save_adm', title: 'Save Your ADM Username', owner: 'user', icon: '🗂️', time: '2 min', gate: ['adm_request'],
     summary: 'Once Amer confirms the ADM account, save it here for PAM and server access workflows.',
     details: [
-      { type: 'info', text: 'ADM is used for PAM and privileged access workflows inside the RTA environment.' }
+      { type: 'info', text: 'ADM is used for PAM and privileged access workflows inside the RTA environment.' },
+      { type: 'warn', text: 'Save only the username here. Do not store passwords in the portal.' }
     ]
   },
   {
@@ -102,9 +122,26 @@ const STEPS = [
         'Enter the OTP from the portal and complete the reset immediately.'
       ]},
       { type: 'list', title: 'Terminal server when outside UAE', items: [
-        'Browser: open https://srvterminal.init-db.lan and log in.',
-        'Windows RDP: connect to 172.31.10.82 or srvterminal.',
+        'Browser: open https://srvterminal.init-db.lan and continue past the browser warning if needed.',
+        'First browser login uses the local terminal account: admin / adminINIT+971.',
+        'After redirect, enter your domain credentials such as INIT\\ABC.',
+        'Windows RDP alternative: connect to 172.31.10.82 or srvterminal and use the Xorg session.',
         'Open the RTA reset link inside that remote session.'
+      ]},
+      { type: 'images', title: 'Terminal server screenshots', images: [
+        { src: HELP_ASSET + 'terminal-browser-login.png', alt: 'Guacamole login page in the browser', caption: 'Browser terminal first login page.' },
+        { src: HELP_ASSET + 'terminal-browser-rdp-login.png', alt: 'Browser-based RDP login page', caption: 'Second login after the browser terminal redirect.' },
+        { src: HELP_ASSET + 'terminal-browser-desktop.png', alt: 'Ubuntu desktop in the browser', caption: 'Desktop session where the RTA reset page can be opened.' },
+        { src: HELP_ASSET + 'terminal-rdp-client.png', alt: 'Remote Desktop Connection client', caption: 'Windows RDP path to the terminal server.' },
+        { src: HELP_ASSET + 'terminal-xorg-login.png', alt: 'Xorg login prompt', caption: 'Choose the Xorg session when using Windows RDP.' },
+        { src: HELP_ASSET + 'terminal-rdp-desktop.png', alt: 'Ubuntu desktop after Windows RDP', caption: 'Desktop after connecting through Windows RDP.' }
+      ]},
+      { type: 'list', title: 'Password rules', items: [
+        'Use more than 10 characters.',
+        'Include at least one number, one uppercase letter, and one special character.',
+        'Do not include first name, last name, employee ID, month names, weekdays, countries, or obvious words.',
+        'Avoid sequences like 123, 456, abc, xyz and repeated patterns like 111 or aaa.',
+        'Do not reuse the last three passwords.'
       ]},
       { type: 'warn', text: 'Passwords expire every 90 days. No automatic reminder is sent by RTA.' }
     ]
@@ -114,41 +151,108 @@ const STEPS = [
     summary: 'Register Oracle Authenticator for TOTP and verify it works for both IITS and ADM flows.',
     details: [
       { type: 'list', title: 'What to do', items: [
-        'Install Oracle Authenticator on your phone.',
-        'Scan the QR code when prompted during setup.',
-        'Verify that a 6-digit TOTP is generated correctly.'
-      ]}
+        'Launch Chrome and open the Oracle Authenticator setup link.',
+        'Enter your RTA username and password.',
+        'Open Oracle Authenticator on your phone and tap the + icon.',
+        'Scan the QR code shown by the RTA setup page.',
+        'Enter the 6-digit code and click Sign In.',
+        'Keep Oracle Authenticator available before attempting VPN or PAM access.'
+      ]},
+      { type: 'info', text: 'If the setup page shows an error immediately after Sign In but the authenticator code is already registered, continue with the guide unless access testing fails.' }
     ]
   },
   {
     id: 'vpn_request', title: 'Request VPN / PAM / SFTP Access', owner: 'user', icon: '🌐', time: '20 min', gate: ['oracle_auth'], expiryKey: 'vpn_date',
     summary: 'Submit the VPN request in the RTA Automation portal and include the needed applications and risk IDs.',
     details: [
-      { type: 'kv', title: 'Applications to request', items: [
-        ['RDP', '10.11.174.39 | Risk ID as per guide'],
-        ['PAM', '10.11.174.38'],
-        ['SSH/SFTP', '10.11.174.40:122 | Risk ID as per guide']
+      { type: 'list', title: 'Portal path', items: [
+        'Log in to the RTA Automation Portal.',
+        'Search for VPN.',
+        'Click Apply under VPN Access Request.',
+        'Choose New VPN Access.',
+        'Fill the required form fields and attach a copy of your INIT ID card.',
+        'Submit the request and note the request ID.'
       ]},
-      { type: 'warn', text: 'VPN access also expires every 90 days and must be renewed manually.' }
+      { type: 'kv', title: 'Applications to request', items: [
+        ['RDP', '10.11.174.10 and 10.11.174.21 | port 3389 | Risk ID RSP-10378'],
+        ['PAM', '10.11.125.14:443'],
+        ['SSH/SFTP', '10.11.174.40 | port 122 | Risk ID RSK-10378']
+      ]},
+      { type: 'list', title: 'Renewal path', items: [
+        'For renewal, choose Extension of Existing VPN Access instead of New VPN Access.',
+        'Attach the INIT ID card again and wait for approval.'
+      ]},
+      { type: 'images', title: 'VPN request screenshots', images: [
+        { src: HELP_ASSET + 'vpn-search-request.png', alt: 'Search for VPN in the RTA Automation Portal', caption: 'Search for the VPN Access Request.' },
+        { src: HELP_ASSET + 'vpn-apply-request.png', alt: 'Apply button under VPN Access Request', caption: 'Open the VPN Access Request item.' },
+        { src: HELP_ASSET + 'vpn-new-vpn-access.png', alt: 'Select New VPN Access', caption: 'Choose New VPN Access for first-time setup.' },
+        { src: HELP_ASSET + 'vpn-request-form-details.png', alt: 'VPN request form details', caption: 'Fill the VPN request form details.' },
+        { src: HELP_ASSET + 'vpn-add-pam-service.png', alt: 'Add PAM service', caption: 'Add the PAM application/service entry.' },
+        { src: HELP_ASSET + 'vpn-add-ssh-service.png', alt: 'Add SSH or SFTP service', caption: 'Add the SSH/SFTP application/service entry.' }
+      ]},
+      { type: 'images', title: 'Renewal screenshots', images: [
+        { src: HELP_ASSET + 'renew-vpn-search-request.png', alt: 'Search for the VPN request again', caption: 'Find the existing VPN request path for renewal.' },
+        { src: HELP_ASSET + 'renew-vpn-apply-request.png', alt: 'Apply button for the renewal request', caption: 'Open the renewal request.' },
+        { src: HELP_ASSET + 'renew-vpn-extension-choice.png', alt: 'Choose Extension of Existing VPN Access', caption: 'Choose extension instead of new access.' },
+        { src: HELP_ASSET + 'renew-vpn-form-details.png', alt: 'Renewal form details', caption: 'Complete the renewal details and attachments.' }
+      ]},
+      { type: 'warn', text: 'VPN, RDP, PAM, and SFTP access expire every 90 days and must be renewed manually.' }
     ]
   },
   {
     id: 'email_support', title: 'Email RTA IT Support', owner: 'user', icon: '✉️', time: '5 min', gate: ['vpn_request'],
     summary: 'After the request is submitted, email RTA IT support to grant the access and reference the request details.',
     details: [
-      { type: 'info', text: 'Use the RTA Automation Portal > IT Help Desk if you need to raise a support ticket or chase approvals.' }
+      { type: 'info', text: 'Use the RTA Automation Portal > IT Help Desk if you need to raise a support ticket or chase approvals.' },
+      { type: 'list', title: 'When to raise a ticket', items: [
+        'Access is not working after approval.',
+        'Approvals are blocked or unclear.',
+        'VPN, PAM, RDP, or SFTP access behaves unexpectedly.'
+      ]},
+      { type: 'list', title: 'Ticket checklist', items: [
+        'Reference the VPN request ID.',
+        'Describe the exact service that is failing.',
+        'Attach screenshots if available.',
+        'Send or submit after the VPN access request is approved and closed.'
+      ]},
+      { type: 'images', title: 'Support screenshot', images: [
+        { src: HELP_ASSET + 'it-help-desk-navigation.png', alt: 'IT Help Desk section in the RTA Automation Portal', caption: 'Use the IT Help Desk area when support intervention is needed.' }
+      ]}
     ]
   },
   {
     id: 'install_vpn', title: 'Install Ivanti and Test Access', owner: 'user', icon: '💻', time: '15 min', gate: ['email_support'],
     summary: 'Install Ivanti Secure Access Client, add the RTA VPN connection, and test VPN/PAM/SFTP access.',
     details: [
-      { type: 'kv', title: 'Connection', items: [
+      { type: 'kv', title: 'Ivanti connection', items: [
         ['Type', 'Policy Secure (UAC) or Connect Secure (VPN)'],
         ['Name', 'RTA VPN'],
         ['Server URL', 'https://ettisal.rta.ae/vendors']
       ]},
-      { type: 'info', text: 'For test servers: connect VPN → RDP to Jump Server → then connect to the target server.' }
+      { type: 'list', title: 'Authentication', items: [
+        'First factor: your RTA IITS username and password.',
+        'Second factor: the 6-digit TOTP from Oracle Authenticator.'
+      ]},
+      { type: 'kv', title: 'WinSCP / SFTP', items: [
+        ['Protocol', 'SFTP'],
+        ['Hostname', '10.11.174.40'],
+        ['Port', '122'],
+        ['Username', 'rtadom\\IITS_*USERNAME*']
+      ]},
+      { type: 'list', title: 'PAM test', items: [
+        'Connect to the RTA VPN.',
+        'Open the PAM URL.',
+        'Enter rtadom\\IITS_*USERNAME* and the Oracle Authenticator TOTP.',
+        'Search for your RTA account.',
+        'Use the Connect dropdown and choose PSM-RDP.'
+      ]},
+      { type: 'info', text: 'For test servers: connect VPN → RDP to Jump Server → then connect to the target server. For file transfer: VPN → WinSCP → SFTP server → target server.' },
+      { type: 'images', title: 'Install and test screenshots', images: [
+        { src: HELP_ASSET + 'ivanti-add-connection.png', alt: 'Ivanti Secure Access Client add connection window', caption: 'Add the RTA VPN connection in Ivanti.' },
+        { src: HELP_ASSET + 'winscp-login.png', alt: 'WinSCP login window with required connection details', caption: 'WinSCP SFTP connection details.' },
+        { src: HELP_ASSET + 'pam-account-search.png', alt: 'Search for your RTA account in PAM', caption: 'Search for your account in PAM.' },
+        { src: HELP_ASSET + 'pam-connect-psm-rdp.png', alt: 'Choose PSM-RDP from the connect dropdown', caption: 'Use Connect → PSM-RDP after finding the account.' }
+      ]}
     ]
   },
 ];
@@ -729,9 +833,9 @@ function App() {
       <div className="card side-card">
         <div className="side-card-title">Quick links</div>
         <div className="quick-links">
-          <a className="quick-link" href="https://direct.rta.ae"><span>RTA Automation Portal</span><small>Portal</small></a>
-          <a className="quick-link" href="https://srvterminal.init-db.lan"><span>Terminal Server</span><small>UAE-only workaround</small></a>
-          <a className="quick-link" href="https://ettisal.rta.ae/vendors"><span>Ivanti VPN</span><small>ettisal.rta.ae</small></a>
+          <a className="quick-link" href="https://direct.rta.ae" target="_blank" rel="noopener noreferrer"><span>RTA Automation Portal</span><small>Portal</small></a>
+          <a className="quick-link" href="https://srvterminal.init-db.lan" target="_blank" rel="noopener noreferrer"><span>Terminal Server</span><small>UAE-only workaround</small></a>
+          <a className="quick-link" href="https://ettisal.rta.ae/vendors" target="_blank" rel="noopener noreferrer"><span>Ivanti VPN</span><small>ettisal.rta.ae</small></a>
         </div>
       </div>
     </div>
@@ -747,11 +851,11 @@ function App() {
         <div className="topbar-left"><Logo /><span className="topbar-title">OTP Portal</span></div>
         <div className="topbar-right">
           <span className="nav-pill active">{currentUser.token}</span>
-          {['otp', 'wizard', 'help', 'admin'].map(v => (
+          {['otp', 'wizard', 'admin'].map(v => (
             <span key={v} className={`nav-pill ${view === v ? 'active' : ''}`} onClick={() => {
               setView(v);
               if (v === 'admin' && admin.session && !admin.data) loadAdminData();
-            }}>{v === 'otp' ? 'OTP' : v === 'wizard' ? 'RTA Wizard' : v === 'help' ? 'Help' : 'Admin'}</span>
+            }}>{v === 'otp' ? 'OTP' : v === 'wizard' ? 'RTA Wizard' : 'Admin'}</span>
           ))}
           <button className="btn btn-secondary" onClick={logoutUser}>Logout</button>
           {admin.session && view === 'admin' && <button className="btn btn-secondary" onClick={logoutAdmin}>Admin logout</button>}
@@ -760,7 +864,6 @@ function App() {
       <main className="app-shell">
         {view === 'otp' && <OtpView otp={otp} claimOtp={claimOtp} retryOtp={retryOtp} resetClaim={resetClaim} sidebar={sharedSidebar} currentUser={currentUser} />}
         {view === 'wizard' && <WizardView user={wizardUser} saveWizard={saveWizard} wizardStatus={wizardStatus} openStep={openStep} setOpenStep={setOpenStep} doneCount={doneCount} progressPct={progressPct} nextStep={nextStep} toggleStep={toggleStep} />}
-        {view === 'help' && <HelpView faqOpen={faqOpen} setFaqOpen={setFaqOpen} />}
         {view === 'admin' && <AdminView admin={admin} setAdmin={setAdmin} doAdminAuth={doAdminAuth} loadAdminData={loadAdminData} toggleAdminStep={toggleAdminStep} pendingAdminTasks={pendingAdminTasks} saveConfig={saveConfig} />}
       </main>
     </>
@@ -944,7 +1047,25 @@ function OtpView({ otp, claimOtp, retryOtp, resetClaim, sidebar, currentUser }) 
 }
 
 function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, doneCount, progressPct, nextStep, toggleStep }) {
+  const [guideOverlay, setGuideOverlay] = useState({ stepId: null, page: 0 });
+  const guideStep = STEPS.find(step => step.id === guideOverlay.stepId);
+
+  function openGuideOverlay(step) {
+    setOpenStep(null);
+    setGuideOverlay({ stepId: step.id, page: 0 });
+  }
+
+  function closeGuideOverlay() {
+    setGuideOverlay({ stepId: null, page: 0 });
+  }
+
+  function setGuidePage(page) {
+    const max = Math.max(0, (guideStep ? buildGuidePages(guideStep).length : 1) - 1);
+    setGuideOverlay(state => ({ ...state, page: Math.max(0, Math.min(page, max)) }));
+  }
+
   return (
+    <>
     <div className="wide-layout">
       <div className="card main-panel">
         <div className="hero-row">
@@ -973,7 +1094,6 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
             const done = getVisibleDone(user, step);
             const unlocked = isUnlocked(user, step);
             const isNext = nextStep?.id === step.id;
-            const open = openStep === step.id;
             return (
               <div key={step.id} className={`step-card ${step.owner === 'admin' ? 'admin' : ''} ${done ? 'done' : ''} ${isNext ? 'next' : ''} ${!unlocked ? 'locked' : ''}`} style={done && step.owner === 'admin' ? { opacity: 0.68, background: RS.neutral100, borderColor: RS.neutral300 } : undefined}>
                 <div className={`rail ${done ? 'done' : isNext ? 'next' : ''}`}>{done ? '✓' : step.icon}</div>
@@ -995,10 +1115,9 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
                     ) : (
                       <span className={`pill ${done ? 'success' : 'warn'}`}>{done ? 'Completed by admin' : 'Waiting for admin'}</span>
                     )}
-                    <button className="btn btn-secondary" onClick={() => setOpenStep(open ? null : step.id)}>{open ? 'Hide guide' : '📖 View guide'}</button>
+                    <button className="btn btn-secondary" onClick={() => openGuideOverlay(step)}>📖 View guide</button>
                     {isNext && !done && <span className="pill primary">← Up next</span>}
                   </div>
-                  {open && <Guide step={step} user={user} />}
                 </div>
                 <div />
               </div>
@@ -1033,9 +1152,9 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
         <div className="card side-card">
           <div className="side-card-title">Quick links</div>
           <div className="quick-links">
-            <a className="quick-link" href="https://direct.rta.ae"><span>RTA Automation Portal</span><small>Main portal</small></a>
-            <a className="quick-link" href="https://srvterminal.init-db.lan"><span>Terminal Server</span><small>Outside UAE</small></a>
-            <a className="quick-link" href="https://ettisal.rta.ae/vendors"><span>Ivanti VPN</span><small>Install/test</small></a>
+            <a className="quick-link" href="https://direct.rta.ae" target="_blank" rel="noopener noreferrer"><span>RTA Automation Portal</span><small>Main portal</small></a>
+            <a className="quick-link" href="https://srvterminal.init-db.lan" target="_blank" rel="noopener noreferrer"><span>Terminal Server</span><small>Outside UAE</small></a>
+            <a className="quick-link" href="https://ettisal.rta.ae/vendors" target="_blank" rel="noopener noreferrer"><span>Ivanti VPN</span><small>Install/test</small></a>
           </div>
         </div>
 
@@ -1049,20 +1168,163 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
         </div>
       </div>
     </div>
+    {guideStep && (
+      <GuideOverlay
+        step={guideStep}
+        page={guideOverlay.page}
+        setPage={setGuidePage}
+        onClose={closeGuideOverlay}
+      />
+    )}
+    </>
+  );
+}
+
+function GuideBlock({ block }) {
+  if (!block) return null;
+  if (block.type === 'info') return <div className="guide-block"><div className="inline-info">{block.text}</div></div>;
+  if (block.type === 'warn') return <div className="guide-block"><div className="inline-note">{block.text}</div></div>;
+  if (block.type === 'list') return <div className="guide-block"><div className="guide-label">{block.title}</div><ul>{block.items.map((item, i) => <li key={i}>{item}</li>)}</ul></div>;
+  if (block.type === 'links') return <div className="guide-block"><div className="guide-label">{block.title}</div><ul>{block.items.map((item, i) => <li key={i}><a href={item.href} target="_blank" rel="noopener noreferrer">{item.label}</a></li>)}</ul></div>;
+  if (block.type === 'kv') return <div className="guide-block"><div className="guide-label">{block.title}</div>{block.items.map((item, i) => <div className="kv" key={i}><div className="kv-key">{item[0]}</div><div>{item[1]}</div></div>)}</div>;
+  if (block.type === 'images') return (
+    <div className="guide-block">
+      <div className="guide-label">{block.title || 'Screenshots'}</div>
+      <div className="guide-image-grid">
+        {(block.images || []).map((img, i) => (
+          <figure className="guide-shot" key={i}>
+            <img src={img.src} alt={img.alt || img.caption || ''} loading="lazy" />
+            {(img.caption || img.alt) && <figcaption>{img.caption || img.alt}</figcaption>}
+          </figure>
+        ))}
+      </div>
+    </div>
+  );
+  return null;
+}
+
+function buildGuidePages(step) {
+  const pages = [{ type: 'summary', title: 'Overview', text: step.summary, blocks: [] }];
+  (step.details || []).forEach(block => {
+    const isTinyNote = (block.type === 'info' || block.type === 'warn') && !block.title && String(block.text || '').length <= 220;
+    if (isTinyNote) {
+      const target = pages.length === 1 ? pages[0] : pages[pages.length - 1];
+      target.blocks = [...(target.blocks || []), block];
+    } else {
+      pages.push({ ...block, blocks: block.blocks || [] });
+    }
+  });
+  return pages;
+}
+
+function GuideOverlay({ step, page, setPage, onClose }) {
+  const pages = buildGuidePages(step);
+  const activePage = pages[page] || pages[0];
+  const lastPage = pages.length - 1;
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragOffsetRef = useRef(dragOffset);
+
+  useEffect(() => { dragOffsetRef.current = dragOffset; }, [dragOffset]);
+
+  useEffect(() => {
+    setDragOffset({ x: 0, y: 0 });
+  }, [step.id]);
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft') setPage(page - 1);
+      if (e.key === 'ArrowRight') setPage(page + 1);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [page, step.id]);
+
+  function startGuideDrag(e) {
+    if (e.button !== 0) return;
+    if (e.target.closest('button, a, input, textarea, select')) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origin = dragOffsetRef.current;
+    e.preventDefault();
+    document.body.classList.add('guide-dragging');
+
+    function onMove(moveEvent) {
+      setDragOffset({
+        x: origin.x + moveEvent.clientX - startX,
+        y: origin.y + moveEvent.clientY - startY,
+      });
+    }
+
+    function onUp() {
+      document.body.classList.remove('guide-dragging');
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  }
+
+  return (
+    <div className="guide-overlay open" role="presentation">
+      <div className="guide-backdrop" />
+      <section
+        className="guide-modal"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="guide-title"
+        style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
+      >
+        <div className="guide-modal-head guide-drag-handle" onPointerDown={startGuideDrag} title="Drag to move guide window">
+          <div>
+            <div className="eyebrow">// RTA wizard guide</div>
+            <h2 id="guide-title" className="guide-modal-title">{step.title}</h2>
+            <div className="sub">Step owner: {step.owner === 'admin' ? 'Admin' : 'You'} · Estimated time: {step.time} · Drag this guide from the header; portal remains clickable behind it</div>
+          </div>
+          <button className="guide-close" onClick={onClose} aria-label="Close guide">×</button>
+        </div>
+
+        <div className="guide-tabs">
+          {pages.map((p, idx) => (
+            <button key={idx} className={'guide-tab ' + (idx === page ? 'active' : '')} onClick={() => setPage(idx)}>
+              {p.type === 'summary' ? 'Overview' : p.title || ('Page ' + (idx + 1))}
+            </button>
+          ))}
+        </div>
+
+        <div className="guide-modal-body">
+          {activePage.type === 'summary' ? (
+            <div className="guide-stack">
+              <div className="guide-block">
+                <div className="inline-info">{activePage.text}</div>
+                <div className="small" style={{ marginTop: 12 }}>Use the tabs or the Back / Next buttons to move through only the help relevant to this wizard step.</div>
+              </div>
+              {(activePage.blocks || []).map((block, idx) => <GuideBlock key={idx} block={block} />)}
+            </div>
+          ) : (
+            <div className="guide-stack">
+              <GuideBlock block={activePage} />
+              {(activePage.blocks || []).map((block, idx) => <GuideBlock key={idx} block={block} />)}
+            </div>
+          )}
+        </div>
+
+        <div className="guide-modal-footer">
+          <button className="btn btn-secondary" onClick={() => setPage(page - 1)} disabled={page <= 0}>← Back</button>
+          <div className="guide-count">{page + 1} / {pages.length}</div>
+          <button className="btn btn-primary" onClick={() => setPage(page + 1)} disabled={page >= lastPage}>Next →</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
 function Guide({ step }) {
   return (
     <div className="guide-panel">
-      {step.details.map((block, idx) => {
-        if (block.type === 'info') return <div key={idx} className="guide-block"><div className="inline-info">{block.text}</div></div>;
-        if (block.type === 'warn') return <div key={idx} className="guide-block"><div className="inline-note">{block.text}</div></div>;
-        if (block.type === 'list') return <div key={idx} className="guide-block"><div className="guide-label">{block.title}</div><ul>{block.items.map((item, i) => <li key={i}>{item}</li>)}</ul></div>;
-        if (block.type === 'links') return <div key={idx} className="guide-block"><div className="guide-label">{block.title}</div><ul>{block.items.map((item, i) => <li key={i}><a href={item.href}>{item.label}</a></li>)}</ul></div>;
-        if (block.type === 'kv') return <div key={idx} className="guide-block"><div className="guide-label">{block.title}</div>{block.items.map((item, i) => <div className="kv" key={i}><div className="kv-key">{item[0]}</div><div>{item[1]}</div></div>)}</div>;
-        return null;
-      })}
+      {step.details.map((block, idx) => <GuideBlock key={idx} block={block} />)}
     </div>
   );
 }
