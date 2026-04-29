@@ -16,6 +16,22 @@ RENDERED_DIR = OUT_DIR / "rendered"
 ASSETS_SRC = DOCS_DIR / "assets"
 ASSETS_DST = OUT_DIR / "assets"
 STATE_FILE = OUT_DIR / ".build-state.json"
+WIZARD_GUIDE_FILE = OUT_DIR / "wizard-guide.json"
+
+DEFAULT_WIZARD_STEP_MAP = {
+    "00-overview.md": ["form"],
+    "01-new-user-onboarding.md": ["form", "account_creation", "save_iits"],
+    "02-reset-rta-password.md": ["password_reset"],
+    "03-configure-oracle-authenticator.md": ["oracle_auth"],
+    "04-request-rdp-sftp-pam-access.md": ["vpn_request", "adm_request", "save_adm"],
+    "05-install-rta-vpn.md": ["install_vpn"],
+    "06-renew-rdp-sftp-pam-access.md": ["vpn_request", "install_vpn"],
+    "07-install-winscp.md": ["install_vpn"],
+    "08-use-pam.md": ["install_vpn"],
+    "09-rta-it-support-ticket.md": ["email_support"],
+    "10-terminal-server-access.md": ["password_reset"],
+    "11-notes-and-tips.md": ["install_vpn"],
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -27,10 +43,8 @@ def sha256_file(path: Path) -> str:
 
 
 def write_text_if_changed(path: Path, content: str) -> bool:
-    if path.exists():
-        existing = path.read_text(encoding="utf-8")
-        if existing == content:
-            return False
+    if path.exists() and path.read_text(encoding="utf-8") == content:
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return True
@@ -75,16 +89,12 @@ def rewrite_asset_paths(html: str) -> str:
 
 def render_markdown(md_file: Path) -> tuple[dict, str]:
     meta, body = parse_markdown_file(md_file)
-
     slug = meta.get("slug") or md_file.stem
     section = meta.get("section", "General")
     title = meta.get("title", slug.replace("-", " ").title())
     order = int(meta.get("order", 999))
 
-    html = markdown.markdown(
-        body,
-        extensions=["extra", "tables", "fenced_code", "toc"],
-    )
+    html = markdown.markdown(body, extensions=["extra", "tables", "fenced_code", "toc"])
     html = rewrite_asset_paths(html)
 
     manifest_entry = {
@@ -95,6 +105,17 @@ def render_markdown(md_file: Path) -> tuple[dict, str]:
         "htmlPath": f"/help/rendered/{slug}.html",
     }
     return manifest_entry, html
+
+
+def wizard_steps_for(md_file: Path, meta: dict) -> list[str]:
+    if meta.get("wizard") is False:
+        return []
+    explicit = meta.get("wizard_steps")
+    if isinstance(explicit, str):
+        return [s.strip() for s in explicit.split(",") if s.strip()]
+    if isinstance(explicit, list):
+        return [str(s).strip() for s in explicit if str(s).strip()]
+    return DEFAULT_WIZARD_STEP_MAP.get(md_file.name, [])
 
 
 def relative_posix(path: Path, base: Path) -> str:
@@ -112,14 +133,7 @@ def collect_source_assets() -> list[Path]:
 
 
 def compute_source_signature(markdown_state: dict, asset_state: dict) -> str:
-    payload = json.dumps(
-        {
-            "markdown": markdown_state,
-            "assets": asset_state,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    payload = json.dumps({"markdown": markdown_state, "assets": asset_state}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -148,13 +162,14 @@ def main() -> None:
 
     new_md_state: dict = {}
     new_asset_state: dict = {}
-
     manifest: list[dict] = []
+    wizard_steps: dict[str, dict] = {}
     changed_any = False
 
     for md_file in collect_source_markdown():
         rel = relative_posix(md_file, DOCS_DIR)
         file_hash = sha256_file(md_file)
+        meta, _body = parse_markdown_file(md_file)
 
         manifest_entry, html = render_markdown(md_file)
         slug = manifest_entry["slug"]
@@ -177,6 +192,18 @@ def main() -> None:
         new_md_state[rel] = {"hash": file_hash, "slug": slug}
         manifest.append(manifest_entry)
 
+        for step_id in wizard_steps_for(md_file, meta):
+            step = wizard_steps.setdefault(step_id, {"pages": [], "sourceFiles": []})
+            step["pages"].append({
+                "title": manifest_entry["title"],
+                "section": manifest_entry["section"],
+                "order": manifest_entry["order"],
+                "slug": slug,
+                "html": html,
+                "sourceFile": rel,
+            })
+            step["sourceFiles"].append(rel)
+
     deleted_md = set(old_md_state) - set(new_md_state)
     for rel in deleted_md:
         old_slug = old_md_state[rel]["slug"]
@@ -189,12 +216,10 @@ def main() -> None:
         rel = relative_posix(asset_file, ASSETS_SRC)
         file_hash = sha256_file(asset_file)
         dst = ASSETS_DST / rel
-
         previous_hash = old_asset_state.get(rel)
         if previous_hash != file_hash or not dst.exists():
             if copy_file_if_changed(asset_file, dst):
                 changed_any = True
-
         new_asset_state[rel] = file_hash
 
     deleted_assets = set(old_asset_state) - set(new_asset_state)
@@ -213,28 +238,27 @@ def main() -> None:
                     pass
 
     manifest.sort(key=lambda x: (x["section"], x["order"], x["title"]))
+    for step in wizard_steps.values():
+        step["pages"].sort(key=lambda x: (x["section"], x["order"], x["title"]))
 
     previous_manifest = load_previous_manifest()
     source_signature = compute_source_signature(new_md_state, new_asset_state)
     previous_signature = previous_manifest.get("sourceSignature")
     generated_at = previous_manifest.get("generatedAt") if previous_signature == source_signature else utc_now_iso()
 
-    manifest_payload = {
-        "generatedAt": generated_at,
-        "sourceSignature": source_signature,
-        "docs": manifest,
-    }
+    manifest_payload = {"generatedAt": generated_at, "sourceSignature": source_signature, "docs": manifest}
+    if write_text_if_changed(OUT_DIR / "manifest.json", json.dumps(manifest_payload, indent=2)):
+        changed_any = True
 
-    if write_text_if_changed(
-        OUT_DIR / "manifest.json",
-        json.dumps(manifest_payload, indent=2),
-    ):
+    wizard_payload = {"generatedAt": generated_at, "sourceSignature": source_signature, "steps": wizard_steps}
+    if write_text_if_changed(WIZARD_GUIDE_FILE, json.dumps(wizard_payload, indent=2)):
         changed_any = True
 
     save_state({"markdown": new_md_state, "assets": new_asset_state})
 
     if changed_any:
         print(f"Help docs updated. generatedAt={generated_at} sourceSignature={source_signature}")
+        print(f"Wizard guide written to {WIZARD_GUIDE_FILE}")
     else:
         print(f"No help-doc changes detected. sourceSignature={source_signature}")
 
