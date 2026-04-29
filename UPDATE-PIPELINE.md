@@ -38,7 +38,7 @@ The GitHub repo stores:
 
 - backend runtime files such as `main.py` and `monitor.py`
 - portal UI files such as `frontend/app.jsx`, `frontend/index.html`, and `frontend/style.css`
-- Help Docs source files under `docs/help/`
+- Help Docs / RTA Wizard guide source files under `docs/help/`
 - server-managed files such as:
   - `install.sh`
   - `update.sh`
@@ -58,7 +58,7 @@ The self-hosted runner:
 Typical runner workspace:
 
 ```bash
-~/actions-runner/_work/otp-relay-psi/otp-relay-psi/
+~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os/
 ```
 
 ## 2.3 Live deployment target
@@ -180,7 +180,7 @@ Small UI fixes should not redeploy backend code, touch system services, or modif
 
 ---
 
-## 4.3 Help Docs deploy
+## 4.3 Help Docs / RTA Wizard guide deploy
 
 ### Workflow
 
@@ -188,17 +188,50 @@ Small UI fixes should not redeploy backend code, touch system services, or modif
 .github/workflows/deploy-help-docs.yml
 ```
 
+### Triggered by changes to
+
+```text
+docs/help/**
+scripts/build_help_docs.py
+.github/workflows/deploy-help-docs.yml
+```
+
 ### What it manages
 
 - source markdown pages in `docs/help/`
-- Help Docs assets in `docs/help/assets/`
-- the Help Docs build script
+- screenshot and image assets in `docs/help/assets/`
+- the Help Docs / wizard-guide build script
 - generated `frontend/help/` output
-- deployed Help Docs content under `/opt/otp-relay/frontend/help/`
+- generated `frontend/help/wizard-guide.json` consumed by the RTA Wizard floating guide
+- generated `frontend/help/manifest.json` and `frontend/help/rendered/*.html` for optional reference/fallback Help pages
+- deployed Help Docs and wizard-guide assets under `/opt/otp-relay/frontend/help/`
+
+### What maintainers do
+
+Maintainers only edit the repo source files and push to `main`:
+
+```text
+docs/help/*.md
+docs/help/assets/*
+```
+
+The Raspberry Pi self-hosted runner automatically checks out the repo, runs:
+
+```bash
+python3 scripts/build_help_docs.py
+```
+
+and syncs the generated `frontend/help/` output into:
+
+```bash
+/opt/otp-relay/frontend/help/
+```
+
+No maintainer should manually edit `frontend/help/` or `/opt/otp-relay/frontend/help/` for normal Help Docs / wizard-guide updates.
 
 ### Important rule
 
-Help Docs source must be maintained in `docs/help/` and `docs/help/assets/`, not by manually editing generated output under `frontend/help/`.
+The RTA Wizard floating guide is markdown-driven. User-facing guide text should be maintained in `docs/help/*.md` using the configured wizard step blocks, and screenshots should be maintained in `docs/help/assets/`. The generated `frontend/help/wizard-guide.json` is build output and should not be hand-edited.
 
 ---
 
@@ -214,7 +247,6 @@ Help Docs source must be maintained in `docs/help/` and `docs/help/assets/`, not
 
 ```text
 install.sh
-update.sh
 deploy_users.sh
 systemd/*.service
 nginx/otp-relay.conf.template
@@ -270,7 +302,6 @@ Managed files:
 
 ```text
 install.sh
-update.sh
 deploy_users.sh
 ```
 
@@ -444,7 +475,7 @@ scripts/
 ## Runner workspace
 
 ```bash
-~/actions-runner/_work/otp-relay-psi/otp-relay-psi/
+~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os/
 ```
 
 ## Live app
@@ -475,10 +506,13 @@ scripts/
 - copies only allowed UI files
 - no service restart
 
-## Help Docs workflow
+## Help Docs / RTA Wizard guide workflow
 
-- rebuilds docs output
-- syncs generated docs to live portal
+- runs automatically when `docs/help/**`, `scripts/build_help_docs.py`, or the Help Docs workflow changes
+- rebuilds optional rendered Help pages
+- rebuilds `frontend/help/wizard-guide.json` for the RTA Wizard floating guide
+- copies `docs/help/assets/` into generated `frontend/help/assets/`
+- syncs generated `frontend/help/` output to the live portal
 
 ## Server config workflow
 
@@ -515,16 +549,32 @@ frontend/style.css
 
 Push to `main`.
 
-## Update Help Docs
+## Update Help Docs / RTA Wizard guide content
 
-Edit:
+Edit markdown guide content:
 
 ```bash
-docs/help/
+docs/help/*.md
+```
+
+Add or replace screenshots and guide images:
+
+```bash
 docs/help/assets/
 ```
 
 Push to `main`.
+
+The self-hosted Pi runner automatically:
+
+1. checks out the updated repo
+2. installs the build dependencies if needed
+3. runs `python3 scripts/build_help_docs.py`
+4. generates `frontend/help/wizard-guide.json`
+5. generates optional rendered Help reference pages
+6. syncs `frontend/help/` to `/opt/otp-relay/frontend/help/`
+
+Manual deployment is only needed for emergency/debug work. Normal maintainers should not SSH into the Pi to rebuild or copy Help Docs files.
 
 ## Update server-managed files
 
@@ -532,7 +582,6 @@ Edit:
 
 ```bash
 install.sh
-update.sh
 deploy_users.sh
 systemd/*.service
 nginx/otp-relay.conf.template
@@ -548,7 +597,7 @@ Push to `main`.
 ## Check runner workspace
 
 ```bash
-ls -R ~/actions-runner/_work/otp-relay-psi/otp-relay-psi
+ls -R ~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os
 ```
 
 ## Check live app files
@@ -639,6 +688,38 @@ Check:
 
 That indicates the wrong workflow or wrong deployment script was used. The intended model is lane separation.
 
+## Problem: RTA Wizard guide text did not update after editing markdown
+
+Check:
+
+- the edited file is under `docs/help/`
+- the markdown uses the correct wizard step block, for example `<!-- wizard:password_reset -->`
+- the workflow `deploy-help-docs.yml` triggered after the push to `main`
+- the Actions log shows `python3 scripts/build_help_docs.py` completed successfully
+- `frontend/help/wizard-guide.json` was generated in the runner workspace
+- `/opt/otp-relay/frontend/help/wizard-guide.json` exists on the Pi
+- the browser is not showing cached portal data
+
+Verify from the Pi:
+
+```bash
+curl -s http://127.0.0.1:8000/help/wizard-guide.json | python3 -m json.tool >/dev/null
+```
+
+## Problem: wizard screenshots did not update
+
+Check:
+
+- the screenshot was committed under `docs/help/assets/`
+- the markdown references the image with `assets/<filename>`
+- the build copied it to `frontend/help/assets/`
+- the workflow synced it to `/opt/otp-relay/frontend/help/assets/`
+- the public path returns HTTP 200:
+
+```bash
+curl -s -o /dev/null -w "asset=%{http_code}\n" http://127.0.0.1:8000/help/assets/<filename>
+```
+
 ---
 
 # 16. Operational rules
@@ -660,9 +741,11 @@ This project now supports a safer multi-lane update pipeline:
 
 - **Application code deploy** for Python runtime files
 - **Portal UI deploy** for frontend files
-- **Help Docs deploy** for documentation content
+- **Help Docs / RTA Wizard guide deploy** for markdown guide content, screenshots, and generated wizard-guide JSON
 - **Server config deploy** for shell scripts, systemd units, and nginx template updates
 
 The core principle is simple:
 
 **Edit in GitHub → matching workflow runs on the Pi → only the intended part of the system is updated**
+
+For Help Docs and RTA Wizard guide content, maintainers edit only `docs/help/*.md` and `docs/help/assets/`. The self-hosted runner handles the build and live sync automatically.
