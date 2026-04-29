@@ -348,27 +348,25 @@ a:hover { text-decoration: underline; }
 }
 
 
-/* RTA wizard floating guide */
+/* RTA wizard guide overlay */
 .guide-overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
   display: none;
-  pointer-events: none;
 }
 .guide-overlay.open { display: block; }
 .guide-backdrop {
   position: absolute;
   inset: 0;
-  background: transparent;
-  pointer-events: none;
+  background: rgba(15, 23, 42, .46);
+  backdrop-filter: blur(4px);
 }
 .guide-modal {
   position: relative;
-  width: min(1040px, calc(100vw - 28px));
+  width: min(900px, calc(100vw - 28px));
   max-height: calc(100vh - 44px);
   margin: 22px auto;
-  pointer-events: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 22px;
@@ -404,12 +402,10 @@ a:hover { text-decoration: underline; }
 .guide-close:hover { background: var(--primary-50); color: var(--primary-900); }
 .guide-tabs {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 14px 24px;
   border-bottom: 1px solid var(--border);
-  overflow: visible;
+  overflow-x: auto;
 }
 .guide-tab {
   border: 1px solid var(--border);
@@ -418,10 +414,6 @@ a:hover { text-decoration: underline; }
   border-radius: 999px;
   padding: 9px 13px;
   white-space: nowrap;
-  flex: 0 0 auto;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
@@ -440,11 +432,6 @@ a:hover { text-decoration: underline; }
   min-height: 220px;
 }
 .guide-modal-body .guide-block { margin-top: 0; }
-.guide-stack { display: grid; gap: 14px; }
-.guide-image-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }
-.guide-shot { margin: 0; border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--surface-soft); }
-.guide-shot img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; background: white; }
-.guide-shot figcaption { padding: 10px 12px; font-size: 12px; line-height: 1.45; color: var(--muted); border-top: 1px solid var(--border); }
 .guide-modal-body .inline-info,
 .guide-modal-body .inline-note { font-size: 14px; }
 .guide-modal-body .kv {
@@ -483,22 +470,97 @@ a:hover { text-decoration: underline; }
   .guide-modal-body,
   .guide-modal-footer { padding-left: 16px; padding-right: 16px; }
   .guide-modal-title { font-size: 22px; }
-  .guide-image-grid { grid-template-columns: 1fr; }
-  .guide-shot img { max-height: 300px; }
   .guide-modal-footer { position: sticky; bottom: 0; }
 }
 
-/* RTA wizard guide dragging */
-.guide-drag-handle {
+
+/* Markdown-driven RTA wizard guide HTML */
+.guide-overlay {
+  pointer-events: none;
+}
+.guide-modal {
+  pointer-events: auto;
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1040px, calc(100vw - 28px));
+}
+.guide-backdrop {
+  display: none;
+}
+.guide-modal-head {
   cursor: move;
   user-select: none;
-  touch-action: none;
 }
-.guide-drag-handle .guide-close {
+.guide-close {
   cursor: pointer;
+}
+.guide-tabs {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  align-items: center;
+}
+.guide-html {
+  color: var(--text);
+  line-height: 1.62;
+}
+.guide-html h1,
+.guide-html h2,
+.guide-html h3 {
+  margin: 18px 0 10px;
+  line-height: 1.18;
+}
+.guide-html h1 { font-size: 24px; }
+.guide-html h2 { font-size: 19px; }
+.guide-html h3 { font-size: 16px; }
+.guide-html p,
+.guide-html ul,
+.guide-html ol {
+  margin: 0 0 14px;
+}
+.guide-html li {
+  margin: 6px 0;
+}
+.guide-html img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+  box-shadow: 0 10px 32px rgba(15, 23, 42, .12);
+  margin: 14px 0 18px;
+}
+.guide-html table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+}
+.guide-html th,
+.guide-html td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.guide-html code {
+  font-family: var(--mono);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1px 5px;
 }
 .guide-dragging,
 .guide-dragging * {
   cursor: move !important;
   user-select: none !important;
+}
+@media (max-width: 720px) {
+  .guide-modal {
+    top: 8px;
+    width: calc(100vw - 16px);
+    left: 8px !important;
+    transform: none;
+  }
 }
