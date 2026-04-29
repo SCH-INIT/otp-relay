@@ -65,7 +65,8 @@ otp-relay/
 ├── .env.template                  # Config template — copy to .env and fill in
 ├── .gitignore
 ├── README.md
-├── system-design.html              # Standalone interactive system design diagram
+├── system-design.html             # Standalone interactive system design diagram
+├── index.html                     # For standalone interactive system design diagram
 ├── UPDATE-PIPELINE.md
 ├── HELP-DOCS-DEPLOYMENT.md
 ├── frontend/
