@@ -1,57 +1,40 @@
-# Help and wizard guide assets
+# Help Assets
 
-Place screenshots and images for the RTA Wizard guide overlay and optional generated Help pages in this folder.
+Store screenshots and images for the RTA guide in this folder.
 
-These assets are copied into `frontend/help/assets/` by `scripts/build_help_docs.py` and are served by the portal from:
+These assets are copied by:
 
-```text
-/help/assets/<filename>
+```bash
+python3 scripts/build_help_docs.py
 ```
 
-The RTA Wizard floating guide overlay in `frontend/app.jsx` also uses these files directly through `/help/assets/<filename>`.
+from:
 
-## When adding or replacing wizard screenshots
+```text
+docs/help/assets/
+```
 
-1. Add the source PNG here.
-2. Rebuild with:
+to:
 
-   ```bash
-   python3 scripts/build_help_docs.py
-   ```
+```text
+frontend/help/assets/
+```
 
-3. Reference the generated asset from `frontend/app.jsx` using:
+The RTA Wizard floating guide can reference them in markdown like this:
 
-   ```js
-   '/help/assets/<filename>'
-   ```
+```md
+![VPN request form](assets/vpn-request-form-details.png)
+```
 
-4. Do not manually edit or copy files into `frontend/help/assets/`; that folder is generated and may be overwritten.
+The build rewrites that path to:
 
-## Suggested filenames
+```text
+/help/assets/vpn-request-form-details.png
+```
 
-- otp-claim-slot.png
-- otp-waiting-room.png
-- otp-code-visible.png
-- oracle-auth-qr.png
-- vpn-search.png
-- vpn-apply.png
-- vpn-new-access.png
-- vpn-form.png
-- vpn-add-rdp.png
-- vpn-add-pam.png
-- vpn-add-ssh.png
-- ivanti-add-connection.png
-- renew-vpn-search.png
-- renew-vpn-apply.png
-- renew-vpn-extension.png
-- renew-vpn-form.png
-- winscp-login.png
-- pam-search-account.png
-- pam-psm-rdp.png
-- helpdesk-section.png
-- helpdesk-form.png
-- terminal-browser-login.png
-- terminal-browser-rdp-login.png
-- terminal-browser-desktop.png
-- terminal-rdp-client.png
-- terminal-xorg-login.png
+When updating screenshots:
+
+1. Add or replace the PNG in `docs/help/assets/`.
+2. Reference it from the relevant `docs/help/*.md` file.
+3. Run `python3 scripts/build_help_docs.py`.
+4. Deploy the portal UI.
