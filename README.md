@@ -16,9 +16,17 @@ Portal (user's browser)
    ↓  polls /claim-status every 3 seconds
 OTP appears on screen — no email involved
 
-The same portal also hosts the **RTA Access Wizard**, **Help** section, and **Admin** views.
+The same portal also hosts the **RTA Access Wizard**, markdown-driven guide assets, and **Admin** views.
 RTA onboarding progress is server-backed so reminders and progress persist across devices.
 ```
+
+## System Design
+
+For a clickable architecture view with component descriptions, open the standalone system design page:
+
+<a href="./system-design.html" target="_blank" rel="noopener noreferrer">Open interactive system design</a>
+
+The HTML file is kept at the repository root so it can be linked from this README and published directly by GitHub Pages as `/system-design.html`.
 
 1. User opens the portal → enters their 2 or 3 character token → clicks **Claim my slot**
 2. If the queue is empty, they become the active user immediately. If someone is ahead of them, they enter the waiting room and are told not to trigger their OTP yet.
@@ -57,12 +65,13 @@ otp-relay/
 ├── .env.template                  # Config template — copy to .env and fill in
 ├── .gitignore
 ├── README.md
+├── system-design.html              # Standalone interactive system design diagram
 ├── UPDATE-PIPELINE.md
 ├── HELP-DOCS-DEPLOYMENT.md
 ├── frontend/
 │   ├── index.html                 # Portal shell
 │   ├── style.css                  # App styles
-│   ├── app.jsx                    # React UI logic for OTP, Wizard, Help, and Admin views
+│   ├── app.jsx                    # React UI logic for OTP, Wizard, floating guide, and Admin views
 │   └── help/                      # Generated Help Docs output
 ├── nginx/
 │   └── otp-relay.conf.template    # nginx reverse proxy template rendered during install/deploy
