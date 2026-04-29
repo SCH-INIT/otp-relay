@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,20 +19,22 @@ ASSETS_DST = OUT_DIR / "assets"
 STATE_FILE = OUT_DIR / ".build-state.json"
 WIZARD_GUIDE_FILE = OUT_DIR / "wizard-guide.json"
 
+# File-level fallback is intentionally narrow. Prefer explicit
+# <!-- wizard:step_id --> ... <!-- /wizard --> blocks in docs/help/*.md.
+# 00-overview.md is maintainer/reference material and is never mapped by default.
 DEFAULT_WIZARD_STEP_MAP = {
-    "00-overview.md": ["form"],
-    "01-new-user-onboarding.md": ["form", "account_creation", "save_iits"],
     "02-reset-rta-password.md": ["password_reset"],
     "03-configure-oracle-authenticator.md": ["oracle_auth"],
-    "04-request-rdp-sftp-pam-access.md": ["vpn_request", "adm_request", "save_adm"],
+    "04-request-rdp-sftp-pam-access.md": ["vpn_request"],
     "05-install-rta-vpn.md": ["install_vpn"],
-    "06-renew-rdp-sftp-pam-access.md": ["vpn_request", "install_vpn"],
-    "07-install-winscp.md": ["install_vpn"],
-    "08-use-pam.md": ["install_vpn"],
     "09-rta-it-support-ticket.md": ["email_support"],
-    "10-terminal-server-access.md": ["password_reset"],
-    "11-notes-and-tips.md": ["install_vpn"],
 }
+
+WIZARD_BLOCK_RE = re.compile(
+    r"<!--\s*wizard\s*:\s*([^>]+?)\s*-->\s*(.*?)\s*<!--\s*/wizard\s*-->",
+    re.IGNORECASE | re.DOTALL,
+)
+HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", re.MULTILINE)
 
 
 def sha256_file(path: Path) -> str:
@@ -84,7 +87,14 @@ def parse_markdown_file(path: Path) -> tuple[dict, str]:
 
 
 def rewrite_asset_paths(html: str) -> str:
+    # Markdown docs use assets/example.png. The live portal serves generated assets
+    # from /help/assets/example.png.
     return html.replace('src="assets/', 'src="/help/assets/')
+
+
+def render_markdown_text(text: str) -> str:
+    html = markdown.markdown(text, extensions=["extra", "tables", "fenced_code", "toc"])
+    return rewrite_asset_paths(html)
 
 
 def render_markdown(md_file: Path) -> tuple[dict, str]:
@@ -94,9 +104,7 @@ def render_markdown(md_file: Path) -> tuple[dict, str]:
     title = meta.get("title", slug.replace("-", " ").title())
     order = int(meta.get("order", 999))
 
-    html = markdown.markdown(body, extensions=["extra", "tables", "fenced_code", "toc"])
-    html = rewrite_asset_paths(html)
-
+    html = render_markdown_text(body)
     manifest_entry = {
         "slug": slug,
         "title": title,
@@ -105,6 +113,36 @@ def render_markdown(md_file: Path) -> tuple[dict, str]:
         "htmlPath": f"/help/rendered/{slug}.html",
     }
     return manifest_entry, html
+
+
+def split_step_ids(raw_ids: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[,\s]+", raw_ids) if part.strip()]
+
+
+def block_title(markdown_text: str, fallback: str) -> str:
+    match = HEADING_RE.search(markdown_text)
+    if not match:
+        return fallback
+    title = match.group(1).strip()
+    # Remove simple Markdown emphasis/backticks from tab labels.
+    title = re.sub(r"[`*_]", "", title)
+    return title
+
+
+def extract_wizard_blocks(body: str, fallback_title: str) -> list[dict]:
+    blocks: list[dict] = []
+    for idx, match in enumerate(WIZARD_BLOCK_RE.finditer(body)):
+        step_ids = split_step_ids(match.group(1))
+        content = match.group(2).strip()
+        if not step_ids or not content:
+            continue
+        blocks.append({
+            "stepIds": step_ids,
+            "title": block_title(content, fallback_title),
+            "markdown": content,
+            "blockIndex": idx,
+        })
+    return blocks
 
 
 def wizard_steps_for(md_file: Path, meta: dict) -> list[str]:
@@ -151,6 +189,13 @@ def load_previous_manifest() -> dict:
         return {}
 
 
+def add_wizard_page(wizard_steps: dict, step_id: str, page: dict, source_file: str) -> None:
+    step = wizard_steps.setdefault(step_id, {"pages": [], "sourceFiles": []})
+    step["pages"].append(page)
+    if source_file not in step["sourceFiles"]:
+        step["sourceFiles"].append(source_file)
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     RENDERED_DIR.mkdir(parents=True, exist_ok=True)
@@ -169,7 +214,7 @@ def main() -> None:
     for md_file in collect_source_markdown():
         rel = relative_posix(md_file, DOCS_DIR)
         file_hash = sha256_file(md_file)
-        meta, _body = parse_markdown_file(md_file)
+        meta, body = parse_markdown_file(md_file)
 
         manifest_entry, html = render_markdown(md_file)
         slug = manifest_entry["slug"]
@@ -192,17 +237,46 @@ def main() -> None:
         new_md_state[rel] = {"hash": file_hash, "slug": slug}
         manifest.append(manifest_entry)
 
-        for step_id in wizard_steps_for(md_file, meta):
-            step = wizard_steps.setdefault(step_id, {"pages": [], "sourceFiles": []})
-            step["pages"].append({
-                "title": manifest_entry["title"],
-                "section": manifest_entry["section"],
-                "order": manifest_entry["order"],
-                "slug": slug,
-                "html": html,
-                "sourceFile": rel,
-            })
-            step["sourceFiles"].append(rel)
+        if meta.get("wizard") is False:
+            continue
+
+        blocks = extract_wizard_blocks(body, manifest_entry["title"])
+        if blocks:
+            for block in blocks:
+                block_html = render_markdown_text(block["markdown"])
+                for step_id in block["stepIds"]:
+                    add_wizard_page(
+                        wizard_steps,
+                        step_id,
+                        {
+                            "title": block["title"],
+                            "section": manifest_entry["section"],
+                            "order": manifest_entry["order"],
+                            "blockIndex": block["blockIndex"],
+                            "slug": slug,
+                            "html": block_html,
+                            "sourceFile": rel,
+                        },
+                        rel,
+                    )
+        else:
+            # Fallback for older topic pages. New/maintained pages should use explicit
+            # wizard blocks so each portal step receives only step-specific content.
+            for step_id in wizard_steps_for(md_file, meta):
+                add_wizard_page(
+                    wizard_steps,
+                    step_id,
+                    {
+                        "title": manifest_entry["title"],
+                        "section": manifest_entry["section"],
+                        "order": manifest_entry["order"],
+                        "blockIndex": 0,
+                        "slug": slug,
+                        "html": html,
+                        "sourceFile": rel,
+                    },
+                    rel,
+                )
 
     deleted_md = set(old_md_state) - set(new_md_state)
     for rel in deleted_md:
@@ -239,7 +313,7 @@ def main() -> None:
 
     manifest.sort(key=lambda x: (x["section"], x["order"], x["title"]))
     for step in wizard_steps.values():
-        step["pages"].sort(key=lambda x: (x["section"], x["order"], x["title"]))
+        step["pages"].sort(key=lambda x: (x["order"], x.get("blockIndex", 0), x["title"]))
 
     previous_manifest = load_previous_manifest()
     source_signature = compute_source_signature(new_md_state, new_asset_state)
