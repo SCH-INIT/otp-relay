@@ -24,7 +24,7 @@ RTA onboarding progress is server-backed so reminders and progress persist acros
 
 For a clickable architecture view with component descriptions, open the standalone system design page:
 
-<a href="./system-design.html" target="_blank" rel="noopener noreferrer">Open interactive system design</a>
+[Open the interactive system design diagram](https://SCH-INIT.github.io/otp-relay-/system-design.html)
 
 The HTML file is kept at the repository root so it can be linked from this README and published directly by GitHub Pages as `/system-design.html`.
 
