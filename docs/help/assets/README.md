@@ -1,40 +1,23 @@
-# Help Assets
+# Help and Wizard Assets
 
-Store screenshots and images for the RTA guide in this folder.
+Store source screenshots and images for the Help Docs and RTA Wizard here.
 
-These assets are copied by:
-
-```bash
-python3 scripts/build_help_docs.py
-```
-
-from:
-
-```text
-docs/help/assets/
-```
-
-to:
+The build script copies this directory to:
 
 ```text
 frontend/help/assets/
 ```
 
-The RTA Wizard floating guide can reference them in markdown like this:
-
-```md
-![VPN request form](assets/vpn-request-form-details.png)
-```
-
-The build rewrites that path to:
+The live portal serves the copied files from:
 
 ```text
-/help/assets/vpn-request-form-details.png
+/help/assets/<filename>
 ```
 
-When updating screenshots:
+Reference images from markdown like this:
 
-1. Add or replace the PNG in `docs/help/assets/`.
-2. Reference it from the relevant `docs/help/*.md` file.
-3. Run `python3 scripts/build_help_docs.py`.
-4. Deploy the portal UI.
+```md
+![Description](assets/example.png)
+```
+
+Do not manually edit generated copies under `frontend/help/assets/` or `/opt/otp-relay/frontend/help/assets/`.
