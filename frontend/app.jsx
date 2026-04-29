@@ -1,6 +1,4 @@
-const { useEffect, useMemo, useState, useRef } = React;
-
-const HELP_ASSET = '/help/assets/';
+const { useEffect, useMemo, useState } = React;
 
 const CONFIG = {
   CLAIM_EXPIRY_SEC: 90,
@@ -61,9 +59,6 @@ const STEPS = [
       { type: 'links', title: 'Useful links', items: [
         { label: 'RTA Access Requests (SharePoint)', href: 'https://initse.sharepoint.com/:f:/r/sites/RTAinternal/Shared%20Documents/RTA%20Documents/PAM/RTA%20Access%20Requests' },
         { label: 'Email template to Jathin', href: 'mailto:jprakash@initse.com?cc=cschilling@initse.com;adarwich@initse.com&subject=RTA-NG-2024%20Request%20RTA%20User%20Account' }
-      ]},
-      { type: 'images', title: 'Screenshots', images: [
-        { src: HELP_ASSET + 'new-user-onboarding-sequence.png', alt: 'New user onboarding sequence', caption: 'End-to-end flow for the RTA new-user onboarding request.' }
       ]}
     ]
   },
@@ -128,14 +123,6 @@ const STEPS = [
         'Windows RDP alternative: connect to 172.31.10.82 or srvterminal and use the Xorg session.',
         'Open the RTA reset link inside that remote session.'
       ]},
-      { type: 'images', title: 'Terminal server screenshots', images: [
-        { src: HELP_ASSET + 'terminal-browser-login.png', alt: 'Guacamole login page in the browser', caption: 'Browser terminal first login page.' },
-        { src: HELP_ASSET + 'terminal-browser-rdp-login.png', alt: 'Browser-based RDP login page', caption: 'Second login after the browser terminal redirect.' },
-        { src: HELP_ASSET + 'terminal-browser-desktop.png', alt: 'Ubuntu desktop in the browser', caption: 'Desktop session where the RTA reset page can be opened.' },
-        { src: HELP_ASSET + 'terminal-rdp-client.png', alt: 'Remote Desktop Connection client', caption: 'Windows RDP path to the terminal server.' },
-        { src: HELP_ASSET + 'terminal-xorg-login.png', alt: 'Xorg login prompt', caption: 'Choose the Xorg session when using Windows RDP.' },
-        { src: HELP_ASSET + 'terminal-rdp-desktop.png', alt: 'Ubuntu desktop after Windows RDP', caption: 'Desktop after connecting through Windows RDP.' }
-      ]},
       { type: 'list', title: 'Password rules', items: [
         'Use more than 10 characters.',
         'Include at least one number, one uppercase letter, and one special character.',
@@ -182,20 +169,6 @@ const STEPS = [
         'For renewal, choose Extension of Existing VPN Access instead of New VPN Access.',
         'Attach the INIT ID card again and wait for approval.'
       ]},
-      { type: 'images', title: 'VPN request screenshots', images: [
-        { src: HELP_ASSET + 'vpn-search-request.png', alt: 'Search for VPN in the RTA Automation Portal', caption: 'Search for the VPN Access Request.' },
-        { src: HELP_ASSET + 'vpn-apply-request.png', alt: 'Apply button under VPN Access Request', caption: 'Open the VPN Access Request item.' },
-        { src: HELP_ASSET + 'vpn-new-vpn-access.png', alt: 'Select New VPN Access', caption: 'Choose New VPN Access for first-time setup.' },
-        { src: HELP_ASSET + 'vpn-request-form-details.png', alt: 'VPN request form details', caption: 'Fill the VPN request form details.' },
-        { src: HELP_ASSET + 'vpn-add-pam-service.png', alt: 'Add PAM service', caption: 'Add the PAM application/service entry.' },
-        { src: HELP_ASSET + 'vpn-add-ssh-service.png', alt: 'Add SSH or SFTP service', caption: 'Add the SSH/SFTP application/service entry.' }
-      ]},
-      { type: 'images', title: 'Renewal screenshots', images: [
-        { src: HELP_ASSET + 'renew-vpn-search-request.png', alt: 'Search for the VPN request again', caption: 'Find the existing VPN request path for renewal.' },
-        { src: HELP_ASSET + 'renew-vpn-apply-request.png', alt: 'Apply button for the renewal request', caption: 'Open the renewal request.' },
-        { src: HELP_ASSET + 'renew-vpn-extension-choice.png', alt: 'Choose Extension of Existing VPN Access', caption: 'Choose extension instead of new access.' },
-        { src: HELP_ASSET + 'renew-vpn-form-details.png', alt: 'Renewal form details', caption: 'Complete the renewal details and attachments.' }
-      ]},
       { type: 'warn', text: 'VPN, RDP, PAM, and SFTP access expire every 90 days and must be renewed manually.' }
     ]
   },
@@ -214,9 +187,6 @@ const STEPS = [
         'Describe the exact service that is failing.',
         'Attach screenshots if available.',
         'Send or submit after the VPN access request is approved and closed.'
-      ]},
-      { type: 'images', title: 'Support screenshot', images: [
-        { src: HELP_ASSET + 'it-help-desk-navigation.png', alt: 'IT Help Desk section in the RTA Automation Portal', caption: 'Use the IT Help Desk area when support intervention is needed.' }
       ]}
     ]
   },
@@ -246,13 +216,7 @@ const STEPS = [
         'Search for your RTA account.',
         'Use the Connect dropdown and choose PSM-RDP.'
       ]},
-      { type: 'info', text: 'For test servers: connect VPN → RDP to Jump Server → then connect to the target server. For file transfer: VPN → WinSCP → SFTP server → target server.' },
-      { type: 'images', title: 'Install and test screenshots', images: [
-        { src: HELP_ASSET + 'ivanti-add-connection.png', alt: 'Ivanti Secure Access Client add connection window', caption: 'Add the RTA VPN connection in Ivanti.' },
-        { src: HELP_ASSET + 'winscp-login.png', alt: 'WinSCP login window with required connection details', caption: 'WinSCP SFTP connection details.' },
-        { src: HELP_ASSET + 'pam-account-search.png', alt: 'Search for your RTA account in PAM', caption: 'Search for your account in PAM.' },
-        { src: HELP_ASSET + 'pam-connect-psm-rdp.png', alt: 'Choose PSM-RDP from the connect dropdown', caption: 'Use Connect → PSM-RDP after finding the account.' }
-      ]}
+      { type: 'info', text: 'For test servers: connect VPN → RDP to Jump Server → then connect to the target server. For file transfer: VPN → WinSCP → SFTP server → target server.' }
     ]
   },
 ];
@@ -1048,7 +1012,32 @@ function OtpView({ otp, claimOtp, retryOtp, resetClaim, sidebar, currentUser }) 
 
 function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, doneCount, progressPct, nextStep, toggleStep }) {
   const [guideOverlay, setGuideOverlay] = useState({ stepId: null, page: 0 });
+  const [wizardGuide, setWizardGuide] = useState({ steps: {}, generatedAt: null });
+  const [guideLoadState, setGuideLoadState] = useState({ loading: true, error: '' });
   const guideStep = STEPS.find(step => step.id === guideOverlay.stepId);
+  const guideData = guideStep ? wizardGuide?.steps?.[guideStep.id] : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWizardGuide() {
+      try {
+        const res = await fetch('/help/wizard-guide.json', { cache: 'no-cache' });
+        if (!res.ok) throw new Error(`wizard-guide.json returned ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) {
+          setWizardGuide(data || { steps: {}, generatedAt: null });
+          setGuideLoadState({ loading: false, error: '' });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('Wizard guide JSON could not be loaded; using built-in fallback guide.', err);
+          setGuideLoadState({ loading: false, error: 'Using built-in fallback guide. Run python3 scripts/build_help_docs.py to refresh /help/wizard-guide.json.' });
+        }
+      }
+    }
+    loadWizardGuide();
+    return () => { cancelled = true; };
+  }, []);
 
   function openGuideOverlay(step) {
     setOpenStep(null);
@@ -1060,7 +1049,7 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
   }
 
   function setGuidePage(page) {
-    const max = Math.max(0, (guideStep ? buildGuidePages(guideStep).length : 1) - 1);
+    const max = Math.max(0, getGuidePages(guideStep, guideData).length - 1);
     setGuideOverlay(state => ({ ...state, page: Math.max(0, Math.min(page, max)) }));
   }
 
@@ -1088,6 +1077,8 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
           </div>
           <div className="progress-bar"><div className="progress-fill" style={{ width: `${progressPct}%` }} /></div>
         </div>
+
+        {guideLoadState.error && <div className="inline-note" style={{ marginBottom: 14 }}>{guideLoadState.error}</div>}
 
         <div className="step-grid">
           {STEPS.map(step => {
@@ -1171,6 +1162,7 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
     {guideStep && (
       <GuideOverlay
         step={guideStep}
+        guide={guideData}
         page={guideOverlay.page}
         setPage={setGuidePage}
         onClose={closeGuideOverlay}
@@ -1180,6 +1172,15 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
   );
 }
 
+function getGuidePages(step, guide) {
+  if (!step) return [];
+  const pages = [{ type: 'summary', title: 'Overview', text: step.summary }];
+  if (guide && Array.isArray(guide.pages) && guide.pages.length) {
+    return pages.concat(guide.pages.map(page => ({ ...page, type: 'html' })));
+  }
+  return pages.concat(step.details || []);
+}
+
 function GuideBlock({ block }) {
   if (!block) return null;
   if (block.type === 'info') return <div className="guide-block"><div className="inline-info">{block.text}</div></div>;
@@ -1187,48 +1188,43 @@ function GuideBlock({ block }) {
   if (block.type === 'list') return <div className="guide-block"><div className="guide-label">{block.title}</div><ul>{block.items.map((item, i) => <li key={i}>{item}</li>)}</ul></div>;
   if (block.type === 'links') return <div className="guide-block"><div className="guide-label">{block.title}</div><ul>{block.items.map((item, i) => <li key={i}><a href={item.href} target="_blank" rel="noopener noreferrer">{item.label}</a></li>)}</ul></div>;
   if (block.type === 'kv') return <div className="guide-block"><div className="guide-label">{block.title}</div>{block.items.map((item, i) => <div className="kv" key={i}><div className="kv-key">{item[0]}</div><div>{item[1]}</div></div>)}</div>;
-  if (block.type === 'images') return (
-    <div className="guide-block">
-      <div className="guide-label">{block.title || 'Screenshots'}</div>
-      <div className="guide-image-grid">
-        {(block.images || []).map((img, i) => (
-          <figure className="guide-shot" key={i}>
-            <img src={img.src} alt={img.alt || img.caption || ''} loading="lazy" />
-            {(img.caption || img.alt) && <figcaption>{img.caption || img.alt}</figcaption>}
-          </figure>
-        ))}
-      </div>
-    </div>
-  );
   return null;
 }
 
-function buildGuidePages(step) {
-  const pages = [{ type: 'summary', title: 'Overview', text: step.summary, blocks: [] }];
-  (step.details || []).forEach(block => {
-    const isTinyNote = (block.type === 'info' || block.type === 'warn') && !block.title && String(block.text || '').length <= 220;
-    if (isTinyNote) {
-      const target = pages.length === 1 ? pages[0] : pages[pages.length - 1];
-      target.blocks = [...(target.blocks || []), block];
-    } else {
-      pages.push({ ...block, blocks: block.blocks || [] });
-    }
-  });
-  return pages;
-}
-
-function GuideOverlay({ step, page, setPage, onClose }) {
-  const pages = buildGuidePages(step);
+function GuideOverlay({ step, guide, page, setPage, onClose }) {
+  const pages = getGuidePages(step, guide);
   const activePage = pages[page] || pages[0];
   const lastPage = pages.length - 1;
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const dragOffsetRef = useRef(dragOffset);
-
-  useEffect(() => { dragOffsetRef.current = dragOffset; }, [dragOffset]);
+  const modalRef = React.useRef(null);
+  const dragRef = React.useRef({ dragging: false, startX: 0, startY: 0, left: 0, top: 0 });
+  const [position, setPosition] = useState(null);
 
   useEffect(() => {
-    setDragOffset({ x: 0, y: 0 });
+    setPosition(null);
   }, [step.id]);
+
+  useEffect(() => {
+    function onMove(e) {
+      if (!dragRef.current.dragging) return;
+      const rect = modalRef.current ? modalRef.current.getBoundingClientRect() : { width: 720, height: 400 };
+      const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
+      const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
+      setPosition({
+        left: Math.max(8, Math.min(dragRef.current.left + e.clientX - dragRef.current.startX, maxLeft)),
+        top: Math.max(8, Math.min(dragRef.current.top + e.clientY - dragRef.current.startY, maxTop)),
+      });
+    }
+    function onUp() {
+      dragRef.current.dragging = false;
+      document.body.classList.remove('guide-dragging');
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -1240,48 +1236,31 @@ function GuideOverlay({ step, page, setPage, onClose }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [page, step.id]);
 
-  function startGuideDrag(e) {
-    if (e.button !== 0) return;
-    if (e.target.closest('button, a, input, textarea, select')) return;
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const origin = dragOffsetRef.current;
-    e.preventDefault();
+  function startDrag(e) {
+    if (e.button !== 0 || e.target.closest('button, a, input, textarea, select')) return;
+    const rect = modalRef.current.getBoundingClientRect();
+    dragRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, left: rect.left, top: rect.top };
     document.body.classList.add('guide-dragging');
-
-    function onMove(moveEvent) {
-      setDragOffset({
-        x: origin.x + moveEvent.clientX - startX,
-        y: origin.y + moveEvent.clientY - startY,
-      });
-    }
-
-    function onUp() {
-      document.body.classList.remove('guide-dragging');
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    }
-
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp, { once: true });
+    e.preventDefault();
   }
+
+  function openGuideLink(e) {
+    const link = e.target.closest && e.target.closest('a');
+    if (!link || !link.href) return;
+    e.preventDefault();
+    window.open(link.href, '_blank', 'noopener,noreferrer');
+  }
+
+  const modalStyle = position ? { left: position.left, top: position.top, margin: 0, transform: 'none' } : undefined;
 
   return (
     <div className="guide-overlay open" role="presentation">
-      <div className="guide-backdrop" />
-      <section
-        className="guide-modal"
-        role="dialog"
-        aria-modal="false"
-        aria-labelledby="guide-title"
-        style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
-      >
-        <div className="guide-modal-head guide-drag-handle" onPointerDown={startGuideDrag} title="Drag to move guide window">
+      <section ref={modalRef} className="guide-modal" role="dialog" aria-modal="false" aria-labelledby="guide-title" style={modalStyle}>
+        <div className="guide-modal-head" onMouseDown={startDrag} title="Drag to move guide">
           <div>
             <div className="eyebrow">// RTA wizard guide</div>
             <h2 id="guide-title" className="guide-modal-title">{step.title}</h2>
-            <div className="sub">Step owner: {step.owner === 'admin' ? 'Admin' : 'You'} · Estimated time: {step.time} · Drag this guide from the header; portal remains clickable behind it</div>
+            <div className="sub">Step owner: {step.owner === 'admin' ? 'Admin' : 'You'} · Estimated time: {step.time}</div>
           </div>
           <button className="guide-close" onClick={onClose} aria-label="Close guide">×</button>
         </div>
@@ -1296,18 +1275,14 @@ function GuideOverlay({ step, page, setPage, onClose }) {
 
         <div className="guide-modal-body">
           {activePage.type === 'summary' ? (
-            <div className="guide-stack">
-              <div className="guide-block">
-                <div className="inline-info">{activePage.text}</div>
-                <div className="small" style={{ marginTop: 12 }}>Use the tabs or the Back / Next buttons to move through only the help relevant to this wizard step.</div>
-              </div>
-              {(activePage.blocks || []).map((block, idx) => <GuideBlock key={idx} block={block} />)}
+            <div className="guide-block">
+              <div className="inline-info">{activePage.text}</div>
+              <div className="small" style={{ marginTop: 12 }}>Use the tabs or the Back / Next buttons to move through only the help relevant to this wizard step.</div>
             </div>
+          ) : activePage.type === 'html' ? (
+            <div className="guide-html" onClick={openGuideLink} dangerouslySetInnerHTML={{ __html: activePage.html || '' }} />
           ) : (
-            <div className="guide-stack">
-              <GuideBlock block={activePage} />
-              {(activePage.blocks || []).map((block, idx) => <GuideBlock key={idx} block={block} />)}
-            </div>
+            <GuideBlock block={activePage} />
           )}
         </div>
 
