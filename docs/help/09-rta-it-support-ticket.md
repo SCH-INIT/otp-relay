@@ -7,20 +7,18 @@ slug: rta-it-support-ticket
 
 # Create a ticket for RTA IT Support
 
-## Use this when
+<!-- wizard:email_support -->
+## Access-grant email and support ticket
 
-- access is not working
-- approvals are blocked
-- VPN / PAM / SFTP access does not behave as expected
+After the VPN access request has been approved and closed, send the access-grant email to the RTA IT Support team.
 
-## Steps
+Include:
 
-1. Log in to the **RTA Automation Portal**.
-2. From the left side, select **IT Help Desk**.
-3. Fill in the issue details.
-4. Attach screenshots if needed.
-5. Click **Submit**.
+1. The VPN access request ID.
+2. Your signature or name at the end of the email.
+3. Any screenshots or details needed to confirm the request.
 
-## Screenshot
+Use the RTA Automation Portal **IT Help Desk** path if access is not working, approvals are blocked, or VPN / PAM / SFTP access behaves unexpectedly.
 
 ![IT Help Desk section in the RTA Automation Portal](assets/it-help-desk-navigation.png)
+<!-- /wizard -->

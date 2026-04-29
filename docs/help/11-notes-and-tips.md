@@ -7,29 +7,28 @@ slug: notes-and-tips
 
 # Notes and tips
 
-## Terminal Server usage tips
+<!-- wizard:install_vpn -->
+## Usage and renewal tips
 
-- When finished, use **Log Out** from the Ubuntu session. Do not just close the browser tab.
-- For clipboard in browser-based Guacamole access, press `Ctrl + Alt + Shift` to open the menu.
+- When finished with the Ubuntu Terminal Server, use **Log Out** from the Ubuntu session. Do not just close the browser tab.
+- For clipboard in browser-based Guacamole access, press `Ctrl + Alt + Shift` to open the Guacamole menu.
 - The browser version resizes better when the browser window is maximized.
-
-## Expiry reminders
-
-- VPN access including RDP, SFTP, and PAM expires after 90 days.
-- Passwords also expire after 90 days.
-- The system does not send reminders automatically.
-
-## Timing expectations
-
+- VPN access, including RDP, SFTP, and PAM, expires after 90 days.
+- RTA passwords also expire after 90 days.
+- The system may not send reminders automatically.
 - It can take roughly 2 to 3 weeks to obtain access to the RTA servers.
+<!-- /wizard -->
 
-## Test server access flow
+<!-- wizard:install_vpn -->
+## Test server and file-transfer flow
+
+To connect to the test servers:
 
 1. Connect to the RTA VPN.
-2. Connect to the Jump Server via Remote Desktop.
+2. Connect to the Jump Server through Remote Desktop.
 3. From the Jump Server, connect to the required test server.
 
-## Copying files to the RTA environment
+To copy files to the RTA environment:
 
 1. Connect to the RTA VPN.
 2. Use WinSCP from your local PC to connect to the RTA SFTP server.
@@ -37,3 +36,4 @@ slug: notes-and-tips
 4. Log in remotely to the target test or production server.
 5. Use WinSCP on the remote side to connect to the SFTP server.
 6. Copy files from the SFTP server to the target server.
+<!-- /wizard -->

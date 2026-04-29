@@ -7,18 +7,21 @@ slug: configure-oracle-authenticator
 
 # Configure Oracle Authenticator
 
-## Steps
+<!-- wizard:oracle_auth -->
+## Oracle Authenticator setup
+
+Configure Oracle Authenticator immediately after resetting the RTA password.
 
 1. Launch Chrome and open the Oracle Authenticator setup link.
 2. Enter your RTA username and password.
-3. A QR code is displayed.
+3. A QR code is displayed on the screen.
 4. Open the Oracle Authenticator app on your mobile device.
 5. Tap the **+** icon.
 6. Scan the QR code.
-7. Enter the 6-digit code and click **Sign In**.
-8. Ignore the error message shown after Sign In if the guide still instructs that behavior.
+7. Enter the 6-digit code.
+8. Click **Sign In**.
 
-## Notes
+If an error message appears after sign-in but the authenticator code is already registered, continue unless access testing later fails.
 
-- Oracle Authenticator is used as the second factor for the RTA VPN and other protected services.
-- Keep the app available on your phone before attempting PAM or VPN access.
+Oracle Authenticator is used as the second factor for RTA VPN and PAM access.
+<!-- /wizard -->
