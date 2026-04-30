@@ -100,6 +100,84 @@ select_install_server_values() {
   PORTAL_URL="https://${SERVER_HOSTNAME}"
 }
 
+
+find_self_hosted_runner_user() {
+  # Prefer explicit configuration when the server uses a custom runner account.
+  # Example:
+  #   OTP_RELAY_RUNNER_USER=svc-ghrunner sudo -E bash install.sh
+  local candidate="${OTP_RELAY_RUNNER_USER:-${GITHUB_RUNNER_USER:-}}"
+  if [[ -n "${candidate}" ]] && id "${candidate}" &>/dev/null; then
+    printf '%s
+' "${candidate}"
+    return 0
+  fi
+
+  # If the GitHub Actions runner has already been installed, infer the account
+  # from common runner directories under /home.
+  local runner_dir=""
+  for runner_dir in /home/*/actions-runner /home/*/actions-runner-*; do
+    [[ -d "${runner_dir}" ]] || continue
+    candidate="$(stat -c '%U' "${runner_dir}" 2>/dev/null || true)"
+    if [[ -n "${candidate}" && "${candidate}" != "root" ]] && id "${candidate}" &>/dev/null; then
+      printf '%s
+' "${candidate}"
+      return 0
+    fi
+  done
+
+  # When install.sh is run via sudo by the same account that will run the
+  # self-hosted runner, SUDO_USER is a sensible fallback.
+  candidate="${SUDO_USER:-}"
+  if [[ -n "${candidate}" && "${candidate}" != "root" ]] && id "${candidate}" &>/dev/null; then
+    printf '%s
+' "${candidate}"
+    return 0
+  fi
+
+  return 1
+}
+
+apply_runner_managed_permissions() {
+  local runner_user="${1:-}"
+  [[ -n "${runner_user}" ]] || return 0
+
+  # Generated Help Docs output. deploy-help-docs.yml rsyncs this directory
+  # without sudo, so the self-hosted runner user must own it.
+  mkdir -p "${INSTALL_DIR}/frontend/help"
+  chown -R "${runner_user}:${runner_user}" "${INSTALL_DIR}/frontend/help"
+  find "${INSTALL_DIR}/frontend/help" -type d -exec chmod 755 {} \;
+  find "${INSTALL_DIR}/frontend/help" -type f -exec chmod 644 {} \;
+
+  # Application-code workflow updates these runtime Python files directly.
+  touch "${INSTALL_DIR}/main.py" \
+        "${INSTALL_DIR}/monitor.py"
+
+  chown "${runner_user}:${runner_user}" \
+        "${INSTALL_DIR}/main.py" \
+        "${INSTALL_DIR}/monitor.py"
+
+  chmod 644 "${INSTALL_DIR}/main.py"
+  chmod 755 "${INSTALL_DIR}/monitor.py"
+
+  # Portal UI workflow updates these static frontend files directly.
+  touch "${INSTALL_DIR}/frontend/index.html" \
+        "${INSTALL_DIR}/frontend/style.css" \
+        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/guide.html"
+
+  chown "${runner_user}:${runner_user}" \
+        "${INSTALL_DIR}/frontend/index.html" \
+        "${INSTALL_DIR}/frontend/style.css" \
+        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/guide.html"
+
+  chmod 644 \
+        "${INSTALL_DIR}/frontend/index.html" \
+        "${INSTALL_DIR}/frontend/style.css" \
+        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/guide.html"
+}
+
 echo -e "\n${BOLD}OTP Relay — Install${RESET}"
 echo -e "${DIM}Ubuntu 24.04 LTS VM · Company LAN${RESET}\n"
 
@@ -198,36 +276,18 @@ chown -R otprelay:otprelay "${INSTALL_DIR}/data"
 chmod 700 "${INSTALL_DIR}/data"
 [[ -f "${INSTALL_DIR}/data/users.xlsx" ]] && chmod 600 "${INSTALL_DIR}/data/users.xlsx"
 [[ -f "${INSTALL_DIR}/data/audit.log"  ]] && chmod 600 "${INSTALL_DIR}/data/audit.log"
-# Allow the self-hosted runner user to manage generated Help Docs output
-# and runner-managed frontend files without sudo. This keeps /opt/otp-relay
-# as a deployment target while the runner workspace remains the git checkout.
-if id initbox &>/dev/null; then
-  mkdir -p "${INSTALL_DIR}/frontend/help"
-
-  chown -R initbox:initbox "${INSTALL_DIR}/frontend/help"
-  find "${INSTALL_DIR}/frontend/help" -type d -exec chmod 755 {} \;
-  find "${INSTALL_DIR}/frontend/help" -type f -exec chmod 644 {} \;
-
-  touch "${INSTALL_DIR}/frontend/index.html" \
-        "${INSTALL_DIR}/frontend/style.css" \
-        "${INSTALL_DIR}/frontend/app.jsx" \
-        "${INSTALL_DIR}/frontend/guide.html"
-
-  chown initbox:initbox \
-        "${INSTALL_DIR}/frontend/index.html" \
-        "${INSTALL_DIR}/frontend/style.css" \
-        "${INSTALL_DIR}/frontend/app.jsx" \
-        "${INSTALL_DIR}/frontend/guide.html"
-
-  chmod 644 \
-        "${INSTALL_DIR}/frontend/index.html" \
-        "${INSTALL_DIR}/frontend/style.css" \
-        "${INSTALL_DIR}/frontend/app.jsx" \
-        "${INSTALL_DIR}/frontend/guide.html"
-
-  ok "Runner-managed frontend files prepared for initbox"
+# Allow the company-server self-hosted runner user to update files managed
+# by the GitHub Actions deployment workflows. The username is detected instead
+# of hard-coded so this installer works on servers that do not use a fixed
+# account name. To override detection, set:
+#   OTP_RELAY_RUNNER_USER=<username> sudo -E bash install.sh
+RUNNER_USER="$(find_self_hosted_runner_user || true)"
+if [[ -n "${RUNNER_USER}" ]]; then
+  apply_runner_managed_permissions "${RUNNER_USER}"
+  ok "Runner-managed deploy paths assigned to ${RUNNER_USER}"
 else
-  warn "Runner user initbox not found — skipping runner-managed frontend ownership"
+  warn "No self-hosted runner user detected yet — skipping runner-managed path ownership."
+  warn "After runner setup, re-run install.sh or apply the documented one-time permission repair."
 fi
 ok "Permissions set"
 
