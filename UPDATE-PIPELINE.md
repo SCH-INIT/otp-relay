@@ -1,30 +1,34 @@
 # OTP Relay Portal — Update Pipeline Guide
 
+This guide documents the deployment pipeline for the `SCH-INIT/otp-relay` `portal` branch.
+
+The portal branch is designed for an **Ubuntu 24.04 VM / company server** running a **self-hosted GitHub Actions runner**. The live application directory is a deploy target only; it is not expected to remain a git working copy after installation.
+
 ---
 
 ## What this guide covers
 
 This document explains:
 
-- how the Raspberry Pi self-hosted GitHub Actions runner is used
+- how the company-server self-hosted GitHub Actions runner is used
 - how each update lane is separated to reduce deployment risk
 - what files trigger each workflow
 - what each deployment script is allowed to change
+- how Help Docs and the RTA Wizard guide are generated and deployed
 - how server config updates differ from UI and application code updates
 - how nginx, systemd, and shell-script updates are applied safely
 - what sudo access is required for the server-config workflow
 - how to troubleshoot common deployment failures
 
-
 ---
 
 # 1. Architecture
 
-The project now has **four deployment lanes**:
+The project has **four deployment lanes**:
 
 1. **Application code deploy**
 2. **Portal UI deploy**
-3. **Help Docs deploy**
+3. **Help Docs / RTA Wizard guide deploy**
 4. **Server config deploy**
 
 This split exists so that changes in one area do **not** unintentionally redeploy or overwrite unrelated parts of the system.
@@ -34,10 +38,11 @@ This split exists so that changes in one area do **not** unintentionally redeplo
 # 2. Deployment model
 
 ## 2.1 GitHub repo — source of truth
+
 The GitHub repo stores:
 
 - backend runtime files such as `main.py` and `monitor.py`
-- portal UI files such as `frontend/app.jsx`, `frontend/index.html`, and `frontend/style.css`
+- portal UI files such as `frontend/app.jsx`, `frontend/index.html`, `frontend/style.css`, and `frontend/guide.html`
 - Help Docs / RTA Wizard guide source files under `docs/help/`
 - server-managed files such as:
   - `install.sh`
@@ -48,7 +53,8 @@ The GitHub repo stores:
 - deployment workflows under `.github/workflows/`
 - deployment scripts under `scripts/`
 
-## 2.2 GitHub Actions runner on the Pi
+## 2.2 Self-hosted runner on the company server
+
 The self-hosted runner:
 
 - checks out the repo into its temporary workspace
@@ -58,22 +64,27 @@ The self-hosted runner:
 Typical runner workspace:
 
 ```bash
-~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os/
+~/actions-runner/_work/otp-relay/otp-relay/
 ```
 
+The exact username may vary by server. The installer detects the runner user and prepares runner-managed file permissions accordingly.
+
 ## 2.3 Live deployment target
+
 The live application is served from:
 
 ```bash
 /opt/otp-relay
 ```
 
-That means deployment scripts generally copy from the runner workspace into `/opt/otp-relay`, or into server-managed locations such as:
+Deployment scripts copy from the runner workspace into `/opt/otp-relay`, or into server-managed locations such as:
 
 ```bash
 /etc/systemd/system/
 /etc/nginx/sites-available/
 ```
+
+`/opt/otp-relay` is the live app directory. It is not the source-of-truth git repo after installation.
 
 ---
 
@@ -81,15 +92,15 @@ That means deployment scripts generally copy from the runner workspace into `/op
 
 The current recommended workflow is:
 
-1. Edit files in the GitHub repo
-2. Push to `main`
-3. GitHub Actions runs on the self-hosted Pi runner
-4. Only the matching workflow is triggered
-5. Only the allowed files for that workflow are updated on the server
+1. Edit files in the GitHub repo on the `portal` branch.
+2. Commit/push the change.
+3. GitHub Actions runs on the company-server self-hosted runner.
+4. Only the matching workflow is triggered.
+5. Only the allowed files for that workflow are updated on the server.
 
-This means normal updates should **not** require manually SSHing into the Pi to copy files around.
+Normal updates should **not** require manually copying files into `/opt/otp-relay`.
 
-The key Pi locations are:
+Key server locations:
 
 ```bash
 ~/actions-runner
@@ -158,6 +169,7 @@ This lane is intentionally narrow and is only for runtime Python code.
 frontend/app.jsx
 frontend/index.html
 frontend/style.css
+frontend/guide.html
 scripts/deploy_portal_ui.py
 .github/workflows/deploy-portal-ui.yml
 ```
@@ -170,8 +182,9 @@ scripts/deploy_portal_ui.py
 
 ### What it does
 
-- compares repo UI files against live files in `/opt/otp-relay`
+- compares repo UI files against live files in `/opt/otp-relay/frontend`
 - copies only changed UI files
+- deploys the pop-out RTA Wizard guide page at `/guide.html`
 - does **not** restart backend services
 
 ### Why this split exists
@@ -202,20 +215,20 @@ scripts/build_help_docs.py
 - screenshot and image assets in `docs/help/assets/`
 - the Help Docs / wizard-guide build script
 - generated `frontend/help/` output
-- generated `frontend/help/wizard-guide.json` consumed by the RTA Wizard floating guide
+- generated `frontend/help/wizard-guide.json` consumed by the RTA Wizard floating guide and the pop-out guide page
 - generated `frontend/help/manifest.json` and `frontend/help/rendered/*.html` for optional reference/fallback Help pages
 - deployed Help Docs and wizard-guide assets under `/opt/otp-relay/frontend/help/`
 
 ### What maintainers do
 
-Maintainers only edit the repo source files and push to `main`:
+Maintainers edit only the repo source files and push:
 
 ```text
 docs/help/*.md
 docs/help/assets/*
 ```
 
-The Raspberry Pi self-hosted runner automatically checks out the repo, runs:
+The company-server self-hosted runner automatically checks out the repo, runs:
 
 ```bash
 python3 scripts/build_help_docs.py
@@ -231,7 +244,9 @@ No maintainer should manually edit `frontend/help/` or `/opt/otp-relay/frontend/
 
 ### Important rule
 
-The RTA Wizard floating guide is markdown-driven. User-facing guide text should be maintained in `docs/help/*.md` using the configured wizard step blocks, and screenshots should be maintained in `docs/help/assets/`. The generated `frontend/help/wizard-guide.json` is build output and should not be hand-edited.
+The RTA Wizard floating guide and pop-out guide are markdown-driven. User-facing guide text should be maintained in `docs/help/*.md` using explicit wizard step blocks, and screenshots should be maintained in `docs/help/assets/`.
+
+The generated `frontend/help/wizard-guide.json` is build output and should not be hand-edited.
 
 ---
 
@@ -247,6 +262,7 @@ The RTA Wizard floating guide is markdown-driven. User-facing guide text should 
 
 ```text
 install.sh
+update.sh
 deploy_users.sh
 systemd/*.service
 nginx/otp-relay.conf.template
@@ -281,7 +297,7 @@ Without this split:
 
 - a UI change could accidentally restart backend services
 - a Python code change could accidentally overwrite nginx or systemd config
-- a docs update could accidentally affect the running portal
+- a docs update could accidentally affect runtime code
 - infrastructure updates could be mixed with routine UI work
 
 The intended model is:
@@ -298,10 +314,12 @@ The intended model is:
 The server-config pipeline should use **incremental exact updates**, not a broad full-server refresh.
 
 ## 6.1 Shell scripts
+
 Managed files:
 
 ```text
 install.sh
+update.sh
 deploy_users.sh
 ```
 
@@ -313,6 +331,7 @@ Behavior:
 - do **not** restart services unless some other changed file requires it
 
 ## 6.2 systemd unit files
+
 Managed files:
 
 ```text
@@ -328,6 +347,7 @@ Behavior:
 - verify the restarted services are active
 
 ## 6.3 nginx template
+
 Managed file:
 
 ```text
@@ -379,17 +399,17 @@ Instead, it should:
 
 # 8. Timestamped logging
 
-The Phase 3 server-config deployment script should emit timestamped logs like:
+The server-config deployment script should emit timestamped logs like:
 
 ```text
-[2026-04-21 14:32:01] Starting Phase 3 server config deployment
+[2026-04-21 14:32:01] Starting server config deployment
 [2026-04-21 14:32:01] Validating shell script: /path/to/install.sh
 [2026-04-21 14:32:01] RUN: bash -n /path/to/install.sh
 [2026-04-21 14:32:02] Changed service files:
-[2026-04-21 14:32:02]  - systemd/otp-relay.service
+[2026-04-21 14:32:02] - systemd/otp-relay.service
 [2026-04-21 14:32:02] RUN: sudo -n /usr/bin/systemctl daemon-reload
 [2026-04-21 14:32:03] Service is active: otp-relay.service
-[2026-04-21 14:32:03] Phase 3 server config deployment completed successfully
+[2026-04-21 14:32:03] Server config deployment completed successfully
 ```
 
 This makes Actions logs easier to debug and confirms the exact order of operations.
@@ -400,19 +420,21 @@ This makes Actions logs easier to debug and confirms the exact order of operatio
 
 The service account `otprelay` exists to **run** the OTP Relay service, not to manage system infrastructure.
 
-That means the GitHub runner user (for example `initbox`) must have limited `sudo` permission for the exact commands the server-config workflow uses.
+The self-hosted runner user is responsible for deployment automation. For server-config changes, it must have limited `sudo` permission for the exact commands the server-config workflow uses.
 
 ## Recommended sudoers entries
 
+Replace `<runner-user>` with the actual account that runs the GitHub Actions runner.
+
 ```sudoers
-initbox ALL=(root) NOPASSWD: /usr/bin/systemctl restart otp-relay.service
-initbox ALL=(root) NOPASSWD: /usr/bin/systemctl restart otp-monitor.service
-initbox ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet otp-relay.service
-initbox ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet otp-monitor.service
-initbox ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
-initbox ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
-initbox ALL=(root) NOPASSWD: /usr/sbin/nginx -t
-initbox ALL=(root) NOPASSWD: /usr/bin/install
+<runner-user> ALL=(root) NOPASSWD: /usr/bin/systemctl restart otp-relay.service
+<runner-user> ALL=(root) NOPASSWD: /usr/bin/systemctl restart otp-monitor.service
+<runner-user> ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet otp-relay.service
+<runner-user> ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet otp-monitor.service
+<runner-user> ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
+<runner-user> ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
+<runner-user> ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+<runner-user> ALL=(root) NOPASSWD: /usr/bin/install
 ```
 
 ## Important rule
@@ -438,14 +460,27 @@ not a generic `sudo systemctl ...` or `/bin/systemctl ...`.
 # 10. File and command ownership model
 
 ## Service runtime account
-The `install.sh` process creates the `otprelay` system user.
 
-That user is intended to run the portal service safely with limited privileges.
+The `install.sh` process creates the `otprelay` system user. That user is intended to run the portal service safely with limited privileges.
 
 ## Runner account
-The self-hosted GitHub Actions runner account is responsible for deployment automation.
+
+The self-hosted GitHub Actions runner account is responsible for deployment automation. The installer detects this account and gives it ownership only of runner-managed live files.
+
+Runner-managed live files include:
+
+```text
+/opt/otp-relay/main.py
+/opt/otp-relay/monitor.py
+/opt/otp-relay/frontend/index.html
+/opt/otp-relay/frontend/style.css
+/opt/otp-relay/frontend/app.jsx
+/opt/otp-relay/frontend/guide.html
+/opt/otp-relay/frontend/help/
+```
 
 ## Root-managed targets
+
 The following areas remain root-managed:
 
 ```bash
@@ -475,7 +510,7 @@ scripts/
 ## Runner workspace
 
 ```bash
-~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os/
+~/actions-runner/_work/otp-relay/otp-relay/
 ```
 
 ## Live app
@@ -504,13 +539,14 @@ scripts/
 ## Portal UI workflow
 
 - copies only allowed UI files
+- deploys `frontend/guide.html`
 - no service restart
 
 ## Help Docs / RTA Wizard guide workflow
 
 - runs automatically when `docs/help/**`, `scripts/build_help_docs.py`, or the Help Docs workflow changes
 - rebuilds optional rendered Help pages
-- rebuilds `frontend/help/wizard-guide.json` for the RTA Wizard floating guide
+- rebuilds `frontend/help/wizard-guide.json` for the RTA Wizard floating guide and pop-out guide
 - copies `docs/help/assets/` into generated `frontend/help/assets/`
 - syncs generated `frontend/help/` output to the live portal
 
@@ -535,7 +571,7 @@ main.py
 monitor.py
 ```
 
-Push to `main`.
+Push to the `portal` branch.
 
 ## Update portal UI
 
@@ -545,9 +581,10 @@ Edit:
 frontend/app.jsx
 frontend/index.html
 frontend/style.css
+frontend/guide.html
 ```
 
-Push to `main`.
+Push to the `portal` branch.
 
 ## Update Help Docs / RTA Wizard guide content
 
@@ -563,9 +600,9 @@ Add or replace screenshots and guide images:
 docs/help/assets/
 ```
 
-Push to `main`.
+Push to the `portal` branch.
 
-The self-hosted Pi runner automatically:
+The self-hosted runner automatically:
 
 1. checks out the updated repo
 2. installs the build dependencies if needed
@@ -574,7 +611,7 @@ The self-hosted Pi runner automatically:
 5. generates optional rendered Help reference pages
 6. syncs `frontend/help/` to `/opt/otp-relay/frontend/help/`
 
-Manual deployment is only needed for emergency/debug work. Normal maintainers should not SSH into the Pi to rebuild or copy Help Docs files.
+Manual deployment is only needed for emergency/debug work. Normal maintainers should not SSH into the server to rebuild or copy Help Docs files.
 
 ## Update server-managed files
 
@@ -582,22 +619,23 @@ Edit:
 
 ```bash
 install.sh
+update.sh
 deploy_users.sh
 systemd/*.service
 nginx/otp-relay.conf.template
 scripts/deploy_server_config.py
 ```
 
-Push to `main`.
+Push to the `portal` branch.
 
 ---
 
-# 14. Manual verification commands on the Pi
+# 14. Manual verification commands on the server
 
 ## Check runner workspace
 
 ```bash
-ls -R ~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os
+ls -R ~/actions-runner/_work/otp-relay/otp-relay
 ```
 
 ## Check live app files
@@ -621,6 +659,22 @@ sudo cat /etc/nginx/sites-available/otp-relay
 sudo nginx -t
 ```
 
+## Check frontend and guide endpoints
+
+```bash
+curl -s -o /dev/null -w "root=%{http_code}\n" http://127.0.0.1:8000/
+curl -s -o /dev/null -w "guide=%{http_code}\n" http://127.0.0.1:8000/guide.html
+curl -s -o /dev/null -w "wizard=%{http_code}\n" http://127.0.0.1:8000/help/wizard-guide.json
+```
+
+Expected:
+
+```text
+root=200
+guide=200
+wizard=200
+```
+
 ## Check Actions logs for timestamped deployment output
 
 Open the relevant workflow run in GitHub Actions and inspect the deployment step.
@@ -637,11 +691,60 @@ Check:
 - whether the correct workflow triggered
 - whether the deployment script found any file differences
 
+## Problem: workflow cannot write to `/opt/otp-relay/main.py`
+
+Cause:
+
+- the live application-code files are not owned by the self-hosted runner user
+
+Fix:
+
+- run `install.sh` from the current `portal` branch, or repair ownership for runner-managed files
+- confirm `/opt/otp-relay/main.py` and `/opt/otp-relay/monitor.py` are owned by the runner user
+
+Verify:
+
+```bash
+ls -l /opt/otp-relay/main.py /opt/otp-relay/monitor.py
+```
+
+## Problem: workflow cannot write to `/opt/otp-relay/frontend/help/`
+
+Cause:
+
+- the generated Help Docs output folder is not owned by the self-hosted runner user
+
+Fix:
+
+- run `install.sh` from the current `portal` branch, or repair ownership for `/opt/otp-relay/frontend/help/`
+
+Verify:
+
+```bash
+ls -ld /opt/otp-relay/frontend/help
+```
+
+## Problem: `/guide.html` returns `{"detail":"Not Found"}`
+
+Check:
+
+- `frontend/guide.html` exists in the repo
+- `scripts/deploy_portal_ui.py` allows `frontend/guide.html`
+- the Portal UI workflow has deployed it to `/opt/otp-relay/frontend/guide.html`
+- `main.py` mounts the frontend using an absolute `FRONTEND_DIR`
+
+Verify:
+
+```bash
+ls -l /opt/otp-relay/frontend/guide.html
+curl -i http://127.0.0.1:8000/guide.html
+```
+
 ## Problem: workflow cannot find the deployment script
 
 Cause:
 
-- the workflow refers to a filename that does not exist on `main`
+- the workflow refers to a filename that does not exist on the `portal` branch
 
 Fix:
 
@@ -679,10 +782,12 @@ Check:
 
 Check:
 
-- `systemctl status otp-relay.service`
-- `systemctl status otp-monitor.service`
-- `journalctl -u otp-relay.service -n 100`
-- `journalctl -u otp-monitor.service -n 100`
+```bash
+systemctl status otp-relay.service
+systemctl status otp-monitor.service
+journalctl -u otp-relay.service -n 100
+journalctl -u otp-monitor.service -n 100
+```
 
 ## Problem: Help Docs or UI changed but backend also restarted
 
@@ -694,13 +799,13 @@ Check:
 
 - the edited file is under `docs/help/`
 - the markdown uses the correct wizard step block, for example `<!-- wizard:password_reset -->`
-- the workflow `deploy-help-docs.yml` triggered after the push to `main`
+- the workflow `deploy-help-docs.yml` triggered after the push
 - the Actions log shows `python3 scripts/build_help_docs.py` completed successfully
 - `frontend/help/wizard-guide.json` was generated in the runner workspace
-- `/opt/otp-relay/frontend/help/wizard-guide.json` exists on the Pi
+- `/opt/otp-relay/frontend/help/wizard-guide.json` exists on the server
 - the browser is not showing cached portal data
 
-Verify from the Pi:
+Verify from the server:
 
 ```bash
 curl -s http://127.0.0.1:8000/help/wizard-guide.json | python3 -m json.tool >/dev/null
@@ -711,7 +816,7 @@ curl -s http://127.0.0.1:8000/help/wizard-guide.json | python3 -m json.tool >/de
 Check:
 
 - the screenshot was committed under `docs/help/assets/`
-- the markdown references the image with `assets/<filename>`
+- the markdown references the image with `assets/`
 - the build copied it to `frontend/help/assets/`
 - the workflow synced it to `/opt/otp-relay/frontend/help/assets/`
 - the public path returns HTTP 200:
@@ -724,28 +829,29 @@ curl -s -o /dev/null -w "asset=%{http_code}\n" http://127.0.0.1:8000/help/assets
 
 # 16. Operational rules
 
-- GitHub repo is the source of truth
-- runner workspace is temporary build space
-- `/opt/otp-relay` is the live application path
-- `/etc/systemd/system/` and `/etc/nginx/sites-available/` are root-managed targets
-- use separate workflows for app code, UI, docs, and server config
-- do not use a broad full update process for routine incremental changes
-- keep deployment scripts narrow and allowlist-based
-- keep timestamped logs in server-config deployment output
+- GitHub repo is the source of truth.
+- Runner workspace is temporary build space.
+- `/opt/otp-relay` is the live application path.
+- `/opt/otp-relay` should not be treated as a git working copy after install.
+- `/etc/systemd/system/` and `/etc/nginx/sites-available/` are root-managed targets.
+- Use separate workflows for app code, UI, docs, and server config.
+- Do not use a broad full update process for routine incremental changes.
+- Keep deployment scripts narrow and allowlist-based.
+- Keep timestamped logs in server-config deployment output.
 
 ---
 
 # 17. Summary
 
-This project now supports a safer multi-lane update pipeline:
+This project supports a safer multi-lane update pipeline:
 
 - **Application code deploy** for Python runtime files
-- **Portal UI deploy** for frontend files
+- **Portal UI deploy** for frontend files, including the pop-out guide page
 - **Help Docs / RTA Wizard guide deploy** for markdown guide content, screenshots, and generated wizard-guide JSON
 - **Server config deploy** for shell scripts, systemd units, and nginx template updates
 
 The core principle is simple:
 
-**Edit in GitHub → matching workflow runs on the Pi → only the intended part of the system is updated**
+**Edit in GitHub → matching workflow runs on the company-server self-hosted runner → only the intended part of the system is updated.**
 
 For Help Docs and RTA Wizard guide content, maintainers edit only `docs/help/*.md` and `docs/help/assets/`. The self-hosted runner handles the build and live sync automatically.
