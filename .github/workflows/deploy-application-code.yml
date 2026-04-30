@@ -2,7 +2,7 @@ name: Deploy Application Code
 
 on:
   push:
-    branches: [ main ]
+    branches: [ portal ]
     paths:
       - "main.py"
       - "monitor.py"
