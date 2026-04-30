@@ -2,7 +2,7 @@ name: Deploy Portal UI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ portal ]
     paths:
       - "frontend/app.jsx"
       - "frontend/index.html"
