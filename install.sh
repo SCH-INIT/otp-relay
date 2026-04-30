@@ -4,7 +4,7 @@
 # Raspberry Pi OS (Debian 13 Trixie) · LAN only
 #
 # Usage:
-#   git clone git@github.com:psi1703/otp-relay-pi-os.git /opt/otp-relay
+#   git clone git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
 #   cd /opt/otp-relay
 #   sudo bash install.sh
 # =============================================================================
