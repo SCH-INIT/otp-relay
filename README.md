@@ -167,19 +167,19 @@ sudo bash install.sh
 
 ### Fresh target deployment sequence
 
-For a new Ubuntu 24.04 VM / company-server target, use the documented install-and-runner sequence:
+For a new Ubuntu 24.04 VM / company-server target:
 
 1. Clone the `portal` branch into `/opt/otp-relay`.
-2. Run `install.sh`.
-3. Configure `.env`.
-4. Start `otp-relay` and `otp-monitor`.
-5. Deploy the user list.
-6. Configure the self-hosted GitHub Actions runner.
-7. Add the required sudoers entries for server-config deployment.
-8. Re-run `install.sh` once after runner setup so deploy-target ownership is applied for the detected runner user.
-9. Trigger the workflows and verify the live portal.
+2. Configure the self-hosted GitHub Actions runner with `setup_action-runner.sh`.
+3. Run `install.sh` once.
+4. Configure `/opt/otp-relay/.env`.
+5. Start `otp-relay` and `otp-monitor`.
+6. Deploy the user list.
+7. Add sudoers entries for server-config deployment.
+8. Trigger workflows from GitHub and verify the live portal.
 
-See [UPDATE-PIPELINE.md — Fresh target deployment sequence](./UPDATE-PIPELINE.md#fresh-target-deployment-sequence) for the full commands and verification steps.
+See [UPDATE-PIPELINE.md — Fresh target deployment sequence](./UPDATE-PIPELINE.md#fresh-target-deployment-sequence) for full commands and verification steps.
+
 
 ## Optional: GitHub Actions runner setup
 
