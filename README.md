@@ -170,7 +170,7 @@ You will need a **fresh GitHub runner registration token**.
 
 Get it from:
 
-1. Open the repository on GitHub: `psi1703/otp-relay-psi`
+1. Open the repository on GitHub: `SCH-INIT/otp-relay`
 2. Go to **Settings**
 3. Open **Actions**
 4. Open **Runners**
