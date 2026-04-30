@@ -17,12 +17,22 @@ from pathlib import Path
 import openpyxl
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 import bcrypt
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+
+
+def _resolve_runtime_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else BASE_DIR / path
+
+
+load_dotenv(BASE_DIR / ".env")
 
 app = FastAPI(title="OTP Relay")
 
@@ -55,8 +65,8 @@ OTP_DISPLAY_SEC   = int(os.getenv("OTP_DISPLAY_SEC", "285"))   # 4 min 45 sec
 # If two claims arrive within this window, log a concurrent_risk event.
 CONCURRENT_RISK_SEC = int(os.getenv("CONCURRENT_RISK_SEC", "30"))
 
-USERS_EXCEL_PATH = os.getenv("USERS_EXCEL_PATH", "data/users.xlsx")
-AUDIT_LOG_PATH   = os.getenv("AUDIT_LOG_PATH", "data/audit.log")
+USERS_EXCEL_PATH = str(_resolve_runtime_path(os.getenv("USERS_EXCEL_PATH", "data/users.xlsx")))
+AUDIT_LOG_PATH   = str(_resolve_runtime_path(os.getenv("AUDIT_LOG_PATH", "data/audit.log")))
 
 # ── State ─────────────────────────────────────────────────────────────────────
 # Queue: max depth 1 enforced at claim time. Others wait and poll.
@@ -76,7 +86,7 @@ logger = logging.getLogger("otp-relay")
 
 
 # ── Server-backed wizard/admin state ─────────────────────────────────────────
-DATA_DIR = Path(os.environ.get("OTP_RELAY_DATA_DIR", "data"))
+DATA_DIR = _resolve_runtime_path(os.environ.get("OTP_RELAY_DATA_DIR", "data"))
 WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
@@ -680,5 +690,14 @@ async def onboard_notify(request: Request):
     audit("onboard_notify", token=token, detail=detail)
     return {"status": "ok", "received": payload, "ts": _now_iso()}
 
+
+@app.get("/guide.html", include_in_schema=False)
+def serve_guide_html():
+    guide_path = FRONTEND_DIR / "guide.html"
+    if not guide_path.exists():
+        raise HTTPException(status_code=404, detail="guide.html not deployed")
+    return FileResponse(guide_path)
+
+
 # Serve frontend — must be last
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
