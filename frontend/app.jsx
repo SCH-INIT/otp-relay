@@ -63,8 +63,8 @@ const STEPS = [
     ]
   },
   {
-    id: 'account_creation', title: 'RTA Account Creation', owner: 'admin', icon: '🔧', time: '1–3 days', gate: ['form'],
-    adminLabel: 'Jathin creates the IITS account',
+    id: 'account_creation', title: 'RTA Account Creation', owner: 'admin', ownerLabel: 'Jathin', icon: '🔧', time: '1–3 days', gate: ['form'],
+    adminLabel: 'Jathin: create IITS account',
     summary: 'Jathin applies for your RTA account in the RTA system and shares the IITS username with you.',
     details: [
       { type: 'info', text: 'Jathin applies for your RTA account and notifies you once the IITS username is ready.' },
@@ -76,8 +76,8 @@ const STEPS = [
     ]
   },
   {
-    id: 'adm_request', title: 'Request ADM Account & PAM Onboarding', owner: 'admin', icon: '🔧', time: '3–7 days', gate: ['form'],
-    adminLabel: 'Amer handles ADM + PAM approvals',
+    id: 'adm_request', title: 'Request ADM Account & PAM Onboarding', owner: 'admin', ownerLabel: 'Amer', icon: '🔧', time: '3–7 days', gate: ['form'],
+    adminLabel: 'Amer: handle ADM + PAM approvals',
     summary: 'Amer coordinates ADM creation and PAM onboarding approvals.',
     details: [
       { type: 'list', title: 'Approval chain', items: [
@@ -220,6 +220,21 @@ const STEPS = [
     ]
   },
 ];
+
+function getStepOwnerLabel(step) {
+  if (!step) return 'You';
+  return step.ownerLabel || (step.owner === 'admin' ? 'Admin' : 'You');
+}
+
+function getStepWaitingLabel(step) {
+  const owner = getStepOwnerLabel(step);
+  return owner === 'Admin' ? 'Waiting for admin' : `Waiting for ${owner}`;
+}
+
+function getStepCompletedLabel(step) {
+  const owner = getStepOwnerLabel(step);
+  return owner === 'Admin' ? 'Completed by admin' : `Completed by ${owner}`;
+}
 
 function getVisibleDone(user, step) {
   if (step.owner === 'admin') return (user.adminCompleted || []).includes(step.id);
@@ -1107,7 +1122,7 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
                       <div className="step-summary">{step.summary}</div>
                     </div>
                     <div className="step-tags">
-                      <span className={`pill ${step.owner === 'admin' ? 'warn' : 'primary'}`}>{step.owner === 'admin' ? 'Admin' : 'You'}</span>
+                      <span className={`pill ${step.owner === 'admin' ? 'warn' : 'primary'}`}>{getStepOwnerLabel(step)}</span>
                       <span className="pill">{step.time}</span>
                       {!unlocked && <span className="pill">Locked</span>}
                     </div>
@@ -1116,7 +1131,7 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
                     {step.owner === 'user' ? (
                       <button className={`step-check ${done ? 'done' : ''}`} onClick={() => toggleStep(step)} disabled={!unlocked}>{done ? '✓' : '☐'}</button>
                     ) : (
-                      <span className={`pill ${done ? 'success' : 'warn'}`}>{done ? 'Completed by admin' : 'Waiting for admin'}</span>
+                      <span className={`pill ${done ? 'success' : 'warn'}`}>{done ? getStepCompletedLabel(step) : getStepWaitingLabel(step)}</span>
                     )}
                     <button className="btn btn-secondary" onClick={() => openGuideOverlay(step)}>📖 View guide</button>
                     {isNext && !done && <span className="pill primary">← Up next</span>}
@@ -1273,7 +1288,7 @@ function GuideOverlay({ step, guide, page, setPage, onClose, onPopOut }) {
           <div>
             <div className="eyebrow">// RTA wizard guide</div>
             <h2 id="guide-title" className="guide-modal-title">{step.title}</h2>
-            <div className="sub">Step owner: {step.owner === 'admin' ? 'Admin' : 'You'} · Estimated time: {step.time}</div>
+            <div className="sub">Step owner: {getStepOwnerLabel(step)} · Estimated time: {step.time}</div>
           </div>
           <div className="guide-window-actions">
             <button className="btn btn-secondary guide-popout" onClick={onPopOut} type="button">↗ Pop out</button>
