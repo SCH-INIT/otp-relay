@@ -24,9 +24,11 @@ RTA onboarding progress is server-backed so reminders and progress persist acros
 
 For a clickable architecture view with component descriptions, open the standalone system design page:
 
-[Open the interactive system design diagram](https://SCH-INIT.github.io/otp-relay-/system-design.html)
+[Open the interactive system design diagram](https://SCH-INIT.github.io/otp-relay/system-design.html)
+
 > Tip: Use **Ctrl+Click** on Windows/Linux or **Cmd+Click** on Mac to open the diagram in a new tab.
 
+The HTML file is kept at the repository root and published through GitHub Pages as `/system-design.html`.
 
 1. User opens the portal → enters their 2 or 3 character token → clicks **Claim my slot**
 2. If the queue is empty, they become the active user immediately. If someone is ahead of them, they enter the waiting room and are told not to trigger their OTP yet.
@@ -47,7 +49,7 @@ Only one user is active at a time. This is a deliberate safety constraint: becau
 
 ## Update pipeline
 
-Application code, portal UI, Help Docs, and server configuration are deployed through separate GitHub Actions workflows on the Raspberry Pi self-hosted runner.
+Application code, portal UI, Help Docs, and server configuration are deployed through separate GitHub Actions workflows on the company-server self-hosted runner.
 
 See [UPDATE-PIPELINE.md](./UPDATE-PIPELINE.md) for deployment flow, workflow triggers, server-config deployment behavior, sudo requirements, and troubleshooting.
 ## Repository Structure
@@ -65,14 +67,15 @@ otp-relay/
 ├── .env.template                  # Config template — copy to .env and fill in
 ├── .gitignore
 ├── README.md
+├── index.html                     # GitHub Pages landing page for system design
 ├── system-design.html             # Standalone interactive system design diagram
-├── index.html                     # For standalone interactive system design diagram
 ├── UPDATE-PIPELINE.md
 ├── HELP-DOCS-DEPLOYMENT.md
 ├── frontend/
 │   ├── index.html                 # Portal shell
 │   ├── style.css                  # App styles
 │   ├── app.jsx                    # React UI logic for OTP, Wizard, floating guide, and Admin views
+│   ├── guide.html                 # Pop-out RTA Wizard guide page
 │   └── help/                      # Generated Help Docs output
 ├── nginx/
 │   └── otp-relay.conf.template    # nginx reverse proxy template rendered during install/deploy
@@ -119,30 +122,32 @@ otp-relay/
 ## File Permissions
 
 ```
-/opt/otp-relay/                  root:root         755
-├── main.py                      root:root         644
-├── monitor.py                   root:root         755
-├── install.sh                   root:root         755
-├── update.sh                    root:root         755
-├── deploy_users.sh              root:root         755
-├── test_otp_relay.py            root:root         755
-├── .env.template                root:root         644
-├── .env                         root:otprelay     640  (not in git)
+/opt/otp-relay/                  root:root                    755
+├── main.py                      <runner-user>:<runner-user> 644  (runner-managed)
+├── monitor.py                   <runner-user>:<runner-user> 755  (runner-managed)
+├── install.sh                   root:root                    755
+├── update.sh                    <runner-user>:<runner-user> 755  (runner-managed)
+├── deploy_users.sh              <runner-user>:<runner-user> 755  (runner-managed)
+├── test_otp_relay.py            <runner-user>:<runner-user> 755  (runner-managed)
+├── .env.template                root:root                    644
+├── .env                         root:otprelay                640  (not in git)
 ├── frontend/
-│   ├── index.html               root:root         644
-│   ├── style.css                root:root         644
-│   └── app.jsx                  root:root         644
+│   ├── index.html               <runner-user>:<runner-user> 644  (runner-managed)
+│   ├── style.css                <runner-user>:<runner-user> 644  (runner-managed)
+│   ├── app.jsx                  <runner-user>:<runner-user> 644  (runner-managed)
+│   ├── guide.html               <runner-user>:<runner-user> 644  (runner-managed)
+│   └── help/                    <runner-user>:<runner-user> 755  (generated Help Docs output)
 ├── nginx/
-│   └── otp-relay.conf.template  root:root         644
+│   └── otp-relay.conf.template  root:root                    644
 ├── systemd/
-│   ├── otp-relay.service        root:root         644
-│   └── otp-monitor.service      root:root         644
-├── venv/                        root:root         755  (not in git)
-└── data/                        otprelay:otprelay 700  (not in git)
-    ├── users.xlsx               otprelay:otprelay 600
-    ├── audit.log                otprelay:otprelay 600
-    ├── wizard_progress.json     otprelay:otprelay 600
-    └── admin_auth.json          otprelay:otprelay 600
+│   ├── otp-relay.service        root:root                    644
+│   └── otp-monitor.service      root:root                    644
+├── venv/                        root:root                    755  (not in git)
+└── data/                        otprelay:otprelay            700  (not in git)
+    ├── users.xlsx               otprelay:otprelay            600
+    ├── audit.log                otprelay:otprelay            600
+    ├── wizard_progress.json     otprelay:otprelay            600
+    └── admin_auth.json          otprelay:otprelay            600
 ```
 
 ---
@@ -151,7 +156,7 @@ otp-relay/
 
 ```bash
 # Clone the repo into the install directory
-sudo git clone git@github.com:psi1703/otp-relay-psi.git /opt/otp-relay
+sudo git clone -b portal git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
 cd /opt/otp-relay
 
 # Run the installer
@@ -275,8 +280,8 @@ sudo bash /opt/otp-relay/update.sh --no-restart  # full sync without restart
 ```
 
 > **Warning**
-> `update.sh` does a hard reset of `/opt/otp-relay` to `origin/main`.
-> Do not use it if you have uncommitted local changes in the live repo that you need to keep.
+> `update.sh` is the legacy full-sync path. The normal portal-branch flow is GitHub edit/push → self-hosted runner → deploy scripts copy changed files into `/opt/otp-relay`.
+> Do not treat `/opt/otp-relay` as a git working copy; it is the live application directory.
 
 `update.sh` automatically detects changes to systemd unit files and re-copies them to `/etc/systemd/system/`, so unit changes deploy without manual steps.
 
@@ -526,7 +531,8 @@ sudo systemctl status otp-monitor
 sudo systemctl restart otp-relay
 sudo systemctl restart otp-monitor
 
-# Update from git
+# Normal updates are deployed by the self-hosted runner after commits to the portal branch
+# Legacy full sync, only when explicitly needed:
 sudo bash /opt/otp-relay/update.sh
 
 # Update user list
