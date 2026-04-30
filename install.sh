@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
 # install.sh — Fresh install of OTP Relay from the git repository
-# Raspberry Pi OS (Debian 13 Trixie) · LAN only
+# Ubuntu 24.04 LTS VM · Company LAN
 #
 # Usage:
-#   git clone git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
+#   git clone -b portal git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
 #   cd /opt/otp-relay
 #   sudo bash install.sh
 # =============================================================================
@@ -101,7 +101,7 @@ select_install_server_values() {
 }
 
 echo -e "\n${BOLD}OTP Relay — Install${RESET}"
-echo -e "${DIM}Raspberry Pi OS (Debian Trixie) · LAN only${RESET}\n"
+echo -e "${DIM}Ubuntu 24.04 LTS VM · Company LAN${RESET}\n"
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 
@@ -198,9 +198,37 @@ chown -R otprelay:otprelay "${INSTALL_DIR}/data"
 chmod 700 "${INSTALL_DIR}/data"
 [[ -f "${INSTALL_DIR}/data/users.xlsx" ]] && chmod 600 "${INSTALL_DIR}/data/users.xlsx"
 [[ -f "${INSTALL_DIR}/data/audit.log"  ]] && chmod 600 "${INSTALL_DIR}/data/audit.log"
-# Allow GitHub Actions runner user to write Help Docs output via rsync
-chown -R initbox:initbox "${INSTALL_DIR}/frontend/help"
-chmod -R 755 "${INSTALL_DIR}/frontend/help"
+# Allow the self-hosted runner user to manage generated Help Docs output
+# and runner-managed frontend files without sudo. This keeps /opt/otp-relay
+# as a deployment target while the runner workspace remains the git checkout.
+if id initbox &>/dev/null; then
+  mkdir -p "${INSTALL_DIR}/frontend/help"
+
+  chown -R initbox:initbox "${INSTALL_DIR}/frontend/help"
+  find "${INSTALL_DIR}/frontend/help" -type d -exec chmod 755 {} \;
+  find "${INSTALL_DIR}/frontend/help" -type f -exec chmod 644 {} \;
+
+  touch "${INSTALL_DIR}/frontend/index.html" \
+        "${INSTALL_DIR}/frontend/style.css" \
+        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/guide.html"
+
+  chown initbox:initbox \
+        "${INSTALL_DIR}/frontend/index.html" \
+        "${INSTALL_DIR}/frontend/style.css" \
+        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/guide.html"
+
+  chmod 644 \
+        "${INSTALL_DIR}/frontend/index.html" \
+        "${INSTALL_DIR}/frontend/style.css" \
+        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/guide.html"
+
+  ok "Runner-managed frontend files prepared for initbox"
+else
+  warn "Runner user initbox not found — skipping runner-managed frontend ownership"
+fi
 ok "Permissions set"
 
 # ── 8. TLS certificate + nginx + systemd ─────────────────────────────────────
