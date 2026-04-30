@@ -7,6 +7,7 @@ on:
       - "frontend/app.jsx"
       - "frontend/index.html"
       - "frontend/style.css"
+      - "frontend/guide.html"
       - "scripts/deploy_portal_ui.py"
       - ".github/workflows/deploy-portal-ui.yml"
   workflow_dispatch:
