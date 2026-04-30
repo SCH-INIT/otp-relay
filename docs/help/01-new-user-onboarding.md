@@ -27,7 +27,7 @@ Complete the official RTA new-user access form before the RTA account can be req
 <!-- wizard:account_creation -->
 ## RTA account creation
 
-This is an admin-owned waiting step.
+This step is owned by Jathin.
 
 1. Jathin applies for your RTA account in the RTA system.
 2. You do not need to request an OTP or take action during this step.
@@ -55,7 +55,7 @@ Do not save passwords in the portal. Save only the username.
 <!-- wizard:adm_request -->
 ## ADM account and PAM onboarding
 
-This is an admin-owned waiting step.
+This step is owned by Amer.
 
 1. Jathin informs Amer to request the ADM account.
 2. The PAM onboard list is updated and routed for approval.
@@ -63,7 +63,7 @@ This is an admin-owned waiting step.
 4. ITD and SMD approvals are completed.
 5. Amer sends the PAM account creation request with the approval email attached.
 
-You only need to wait until Amer confirms that the ADM account / PAM onboarding path is ready.
+You do not need to perform an RTA portal action during this step. Continue once Amer confirms that the ADM account and PAM onboarding path are ready.
 <!-- /wizard -->
 
 <!-- wizard:save_adm -->
