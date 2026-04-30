@@ -159,9 +159,8 @@ otp-relay/
 sudo git clone -b portal git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
 cd /opt/otp-relay
 
-# Configure self-hosted runner
+# Configure self-hosted runner to allow install.sh to detect the runner account from /home/<runner-user>/actions-runner and assign ownership correctly the first time.
 sudo bash setup_action-runner.sh <RUNNER_TOKEN>
-Tip: This will allow install.sh to detect the runner account from /home/<runner-user>/actions-runner and assign ownership correctly the first time.
 
 # Run the installer
 sudo bash install.sh
