@@ -2,7 +2,7 @@ name: Deploy Help Docs
 
 on:
   push:
-    branches: [ main ]
+    branches: [ portal ]
     paths:
       - "docs/help/**"
       - "scripts/build_help_docs.py"
