@@ -6,7 +6,7 @@ slug: overview
 wizard: false
 ---
 
-# RTA Servers Access Guidessss
+# RTA Servers Access Guide
 
 This page is a reference index for maintainers and fallback Help pages.
 
