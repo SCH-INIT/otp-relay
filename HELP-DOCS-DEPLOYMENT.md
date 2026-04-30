@@ -1,115 +1,84 @@
 # OTP Relay Portal — Help Docs and RTA Wizard Guide Deployment
 
-The RTA Wizard floating guide is markdown-driven and deployed automatically by the Raspberry Pi self-hosted GitHub Actions runner.
+This document describes how Help Docs, screenshot assets, and the RTA Wizard floating guide are maintained for the `SCH-INIT/otp-relay` `portal` branch.
 
-For normal guide updates, maintainers only edit source files and push to `main`:
+The `portal` branch targets the company server running Ubuntu 24.04 LTS. The live application directory is:
+
+```bash
+/opt/otp-relay
+```
+
+`/opt/otp-relay` is a deploy target only. It is not the git working copy. Repository changes are made on GitHub, then the company-server self-hosted runner checks out the repo in its runner workspace and deploys selected generated files to the live app directory.
+
+---
+
+## 1. Operating model
+
+The RTA Wizard floating guide is markdown-driven.
+
+Maintainers edit source content in the `portal` branch:
 
 ```bash
 docs/help/*.md
 docs/help/assets/*
 ```
 
-The runner then rebuilds and deploys the generated help output automatically. Manual build/deploy commands are only needed for local testing or emergency recovery.
+Then they commit the change to GitHub. The self-hosted runner on the company server automatically:
 
-The portal loads the generated wizard guide from:
+1. checks out the `portal` branch,
+2. installs/uses the required Python dependencies,
+3. runs `python3 scripts/build_help_docs.py`,
+4. generates `frontend/help/wizard-guide.json`,
+5. generates optional rendered reference pages under `frontend/help/rendered/`,
+6. copies screenshots into `frontend/help/assets/`,
+7. syncs `frontend/help/` into `/opt/otp-relay/frontend/help/`.
 
-```text
-/help/wizard-guide.json
-```
-
-This means normal guide-text updates do **not** require editing the large `frontend/app.jsx` file.
+Normal guide-content updates do **not** require editing `frontend/app.jsx`.
 
 ---
 
-## 1. Source of truth
+## 2. Source of truth
 
 | Content type | Source of truth | Notes |
 |---|---|---|
 | User-facing RTA Wizard guide text | `docs/help/*.md` | Use explicit `<!-- wizard:step_id -->` blocks |
-| Wizard screenshots | `docs/help/assets/` | Served after build as `/help/assets/<filename>` |
+| Wizard screenshots/images | `docs/help/assets/` | Served after build as `/help/assets/<filename>` |
 | Optional rendered Help reference pages | `docs/help/*.md` | Generated into `frontend/help/rendered/*.html` |
 | Generated wizard data | `frontend/help/wizard-guide.json` | Generated; do not hand-edit |
-| Generated help manifest | `frontend/help/manifest.json` | Generated; do not hand-edit |
-| Generated help assets | `frontend/help/assets/` | Generated; do not hand-edit |
-| Live deployed help output | `/opt/otp-relay/frontend/help/` | Synced by the Pi runner; do not hand-edit |
+| Generated Help manifest | `frontend/help/manifest.json` | Generated; do not hand-edit |
+| Generated Help assets | `frontend/help/assets/` | Generated; do not hand-edit |
+| Live deployed Help output | `/opt/otp-relay/frontend/help/` | Deployed output; do not hand-edit |
 | Wizard behavior/loading logic | `frontend/app.jsx` | Edit only for UI behavior changes |
 | Wizard styling/layout | `frontend/style.css` | Edit only for design changes |
-| Help Docs deployment workflow | `.github/workflows/deploy-help-docs.yml` | Runs automatically on matching changes |
+| Pop-out guide page | `frontend/guide.html` | Standalone guide window; loads `/help/wizard-guide.json` |
 
 ---
 
-## 2. Automatic deployment flow
+## 3. Wizard block syntax
 
-The normal deployment flow is:
+Each wizard step should receive only the content relevant to that step. Do not map one long markdown page into multiple wizard steps unless the whole document is genuinely relevant to each mapped step.
 
-```text
-Maintainer edits docs/help/*.md or docs/help/assets/*
-        ↓
-Maintainer commits and pushes to main
-        ↓
-GitHub Actions triggers deploy-help-docs.yml
-        ↓
-Self-hosted Raspberry Pi runner checks out the repo
-        ↓
-Runner installs/uses Python build dependencies
-        ↓
-Runner runs python3 scripts/build_help_docs.py
-        ↓
-Build generates frontend/help/wizard-guide.json, manifest, rendered docs, and assets
-        ↓
-Runner syncs frontend/help/ to /opt/otp-relay/frontend/help/
-        ↓
-Live portal serves /help/wizard-guide.json and /help/assets/*
-```
-
-Maintainers should not normally run deployment commands on the Pi after a docs-only change. Push the change and let the runner execute the workflow.
-
----
-
-## 3. Workflow trigger paths
-
-The Help Docs / RTA Wizard guide workflow should trigger when these files change:
-
-```yaml
-on:
-  push:
-    branches: [ main ]
-    paths:
-      - "docs/help/**"
-      - "scripts/build_help_docs.py"
-      - ".github/workflows/deploy-help-docs.yml"
-  workflow_dispatch:
-```
-
-This ensures that guide text, screenshot changes, build-script changes, and workflow changes are deployed by the self-hosted runner.
-
-If `frontend/app.jsx` or `frontend/style.css` changes, that is application/UI code and should be handled by the application deployment workflow, not by the Help Docs-only workflow.
-
----
-
-## 4. Wizard block syntax
-
-Each wizard step should receive only the content relevant to that step. Do not map a whole long markdown page to multiple wizard steps.
-
-Use explicit blocks:
+Use explicit wizard blocks:
 
 ```md
 <!-- wizard:account_creation -->
 ## RTA account creation
 
-This is an admin-owned waiting step.
+This step is owned by Jathin.
 
 1. Jathin applies for your RTA account in the RTA system.
 2. Wait until Jathin confirms that the account has been created.
 3. The expected username format is `IITS_*USERNAME*`.
+
+You do not need to request an OTP or perform any portal action during this step.
 <!-- /wizard -->
 ```
 
-A block can map to more than one step:
+A block can map to more than one step when the same content is genuinely shared:
 
 ```md
 <!-- wizard:vpn_request install_vpn -->
-## Renewal path
+## Renewal note
 
 Renew VPN / RDP / SFTP / PAM access before the 90-day expiry.
 <!-- /wizard -->
@@ -119,7 +88,7 @@ The heading inside the block becomes the wizard overlay tab title.
 
 ---
 
-## 5. Current wizard step IDs
+## 4. Current wizard step IDs
 
 Use these IDs in `<!-- wizard:... -->` blocks:
 
@@ -138,30 +107,7 @@ Use these IDs in `<!-- wizard:... -->` blocks:
 
 ---
 
-## 6. Generated files
-
-`scripts/build_help_docs.py` generates:
-
-```text
-frontend/help/manifest.json
-frontend/help/rendered/*.html
-frontend/help/assets/*
-frontend/help/wizard-guide.json
-```
-
-The rendered HTML pages are optional reference/fallback docs.
-
-The live wizard overlay uses `frontend/help/wizard-guide.json` after it is deployed and served as:
-
-```text
-/help/wizard-guide.json
-```
-
-Generated files should not be hand-edited. Any manual change under `frontend/help/` or `/opt/otp-relay/frontend/help/` can be overwritten by the next runner deployment.
-
----
-
-## 7. Screenshot rules
+## 5. Screenshot rules
 
 All source screenshots must live in:
 
@@ -188,30 +134,77 @@ frontend/help/assets/
 /opt/otp-relay/frontend/help/assets/
 ```
 
-Those are generated/deployed outputs and may be overwritten.
+Those are generated/deployed outputs and may be overwritten by the next runner deployment.
 
 ---
 
-## 8. Day-to-day maintainer workflow
+## 6. Generated files
+
+`scripts/build_help_docs.py` generates:
+
+```text
+frontend/help/manifest.json
+frontend/help/rendered/*.html
+frontend/help/assets/*
+frontend/help/wizard-guide.json
+```
+
+The rendered HTML files are optional reference/fallback pages.
+
+The live RTA Wizard overlay and pop-out guide use:
+
+```text
+/help/wizard-guide.json
+```
+
+The pop-out guide page is served from:
+
+```text
+/guide.html
+```
+
+---
+
+## 7. Workflow trigger
+
+The Help Docs deployment workflow should run when source guide content, assets, or the build script changes.
+
+Typical trigger paths:
+
+```yaml
+paths:
+  - "docs/help/**"
+  - "scripts/build_help_docs.py"
+  - ".github/workflows/deploy-help-docs.yml"
+```
+
+The workflow should build the generated Help output and sync it into the live app directory:
+
+```bash
+python3 scripts/build_help_docs.py
+rsync -rltvz --delete --no-group --no-owner frontend/help/ /opt/otp-relay/frontend/help/
+```
+
+The workflow is expected to run as the self-hosted runner user on the company server. The install script prepares `/opt/otp-relay/frontend/help/` ownership so the runner can write this output without using `sudo` inside the workflow.
+
+---
+
+## 8. Day-to-day update flow
 
 ### Update wizard guide wording
 
-1. Edit the relevant `docs/help/*.md` file.
+1. Edit the relevant `docs/help/*.md` file on the `portal` branch.
 2. Keep the content inside the correct `<!-- wizard:step_id -->` block.
-3. Commit and push to `main`.
-4. Wait for the Pi self-hosted runner to complete the Help Docs workflow.
-5. Refresh the portal and open the RTA Wizard guide.
-
-No manual `build_help_docs.py`, `deploy_portal_ui.py`, or `systemctl restart` is normally required for markdown-only guide updates.
+3. Commit the change to GitHub.
+4. Let the Help Docs workflow run automatically.
+5. Verify `/help/wizard-guide.json` after deployment.
 
 ### Add or replace a screenshot
 
 1. Add the image to `docs/help/assets/`.
 2. Reference it from the relevant markdown block using `assets/<filename>`.
-3. Commit and push to `main`.
-4. Wait for the Pi runner workflow to complete.
-
-Keep screenshot filenames stable when possible. If a filename changes, update every markdown reference that uses it.
+3. Commit the change to GitHub.
+4. Let the Help Docs workflow rebuild and deploy the assets.
 
 ### Change overlay behavior
 
@@ -221,9 +214,7 @@ Edit:
 frontend/app.jsx
 ```
 
-Only do this for behavior/loading/interaction changes, such as guide drag behavior, keyboard shortcuts, JSON loading, or link handling.
-
-Application-code changes should be deployed by the application deployment/update pipeline, not by the Help Docs-only workflow.
+Only do this for behavior/loading/interaction changes.
 
 ### Change overlay design
 
@@ -233,201 +224,207 @@ Edit:
 frontend/style.css
 ```
 
-Only do this for layout/design changes, such as floating guide sizing, tab spacing, screenshot grid layout, or responsive behavior.
+Only do this for layout/design changes.
 
-Application-style changes should be deployed by the application deployment/update pipeline, not by the Help Docs-only workflow.
+### Change the pop-out guide shell
+
+Edit:
+
+```bash
+frontend/guide.html
+```
+
+Only do this for standalone guide-window behavior or layout. The guide content itself still comes from `docs/help/*.md` through `wizard-guide.json`.
 
 ---
 
-## 9. Local test commands
+## 9. Local build checks
 
-Use these commands only when testing locally or diagnosing a failed workflow.
-
-Build generated output locally:
+For local testing in a working repo clone, run:
 
 ```bash
 python3 scripts/build_help_docs.py
 python3 -m json.tool frontend/help/wizard-guide.json >/dev/null
 ```
 
-Inspect generated wizard content:
-
-```bash
-python3 -m json.tool frontend/help/wizard-guide.json | less
-```
-
-Confirm maintainer/reference text is not leaking into the wizard:
+Check that maintainer-only text is not leaking into the user-facing guide:
 
 ```bash
 grep -R "source of truth" frontend/help/wizard-guide.json || true
 grep -R "frontend/app.jsx is the source" frontend/help/wizard-guide.json || true
-grep -R "floating guide overlay is generated" frontend/help/wizard-guide.json || true
 ```
 
 Those commands should not return user-facing wizard content.
 
 ---
 
-## 10. Live verification on the Pi
+## 10. Live verification on the server
 
-After the GitHub Actions workflow completes, verify the live portal output from the Pi:
+After the workflow deploys, verify from the company server:
 
 ```bash
 curl -s -o /dev/null -w "wizard=%{http_code}\n" http://127.0.0.1:8000/help/wizard-guide.json
-curl -s -o /dev/null -w "manifest=%{http_code}\n" http://127.0.0.1:8000/help/manifest.json
-curl -s -o /dev/null -w "asset=%{http_code}\n" http://127.0.0.1:8000/help/assets/<filename>
+curl -s -o /dev/null -w "guide=%{http_code}\n" http://127.0.0.1:8000/guide.html
+curl -s -o /dev/null -w "root=%{http_code}\n" http://127.0.0.1:8000/
 ```
 
-Check the live deployed files:
-
-```bash
-ls -R /opt/otp-relay/frontend/help
-python3 -m json.tool /opt/otp-relay/frontend/help/wizard-guide.json >/dev/null
-```
-
-Check the runner workspace if the live output does not match the repo:
-
-```bash
-ls -R ~/actions-runner/_work/otp-relay-pi-os/otp-relay-pi-os/frontend/help
-```
-
----
-
-## 11. Workflow verification
-
-Check the GitHub Actions run first. A successful docs deployment should show steps equivalent to:
+Expected:
 
 ```text
-Checkout repo
-Use system Python
-Install build dependencies
-Build help docs and wizard guide
-Confirm generated files
-Sync built help output to live portal
+wizard=200
+guide=200
+root=200
 ```
 
-The workflow should sync generated output with a command equivalent to:
+If `/guide.html` returns `{"detail":"Not Found"}`, check:
 
 ```bash
-rsync -rltvz --delete --no-group --no-owner frontend/help/ /opt/otp-relay/frontend/help/
+ls -l /opt/otp-relay/frontend/guide.html
+grep -n "StaticFiles" /opt/otp-relay/main.py
 ```
 
-`--delete` is intentional. It keeps the live `/help/` folder identical to the generated output, removing stale renamed files and old screenshots.
+`main.py` should mount the frontend directory using an absolute path based on `Path(__file__).resolve().parent`.
 
 ---
 
-## 12. Permissions required for runner deployment
+## 11. Permissions required for runner deployment
 
-The runner user, normally `initbox`, must be able to write into:
+The self-hosted runner user must be able to write generated Help output:
 
-```bash
+```text
 /opt/otp-relay/frontend/help/
 ```
 
-If the workflow fails with `Permission denied`, `Operation not permitted`, or `rsync error code 23`, restore permissions:
+The install script should detect the runner user and set ownership for runner-managed frontend paths. If a one-time live repair is needed, run this on the server, replacing `<runner-user>` with the actual self-hosted runner account:
 
 ```bash
-sudo chown -R initbox:initbox /opt/otp-relay/frontend/help
-find /opt/otp-relay/frontend/help -type d -exec chmod 755 {} \;
-find /opt/otp-relay/frontend/help -type f -exec chmod 644 {} \;
+sudo mkdir -p /opt/otp-relay/frontend/help
+sudo chown -R <runner-user>:<runner-user> /opt/otp-relay/frontend/help
+find /opt/otp-relay/frontend/help -type d -exec sudo chmod 755 {} \;
+find /opt/otp-relay/frontend/help -type f -exec sudo chmod 644 {} \;
 ```
 
-Then re-run the workflow from GitHub Actions.
-
----
-
-## 13. Troubleshooting
-
-### Markdown changed but wizard text did not change
-
-Check:
-
-1. The edit is inside the correct `<!-- wizard:step_id -->` block.
-2. The change was pushed to `main`.
-3. The Help Docs workflow ran and completed successfully.
-4. `frontend/help/wizard-guide.json` in the runner workspace contains the change.
-5. `/opt/otp-relay/frontend/help/wizard-guide.json` contains the change.
-6. The browser is not serving cached content.
-
-### Admin-owned steps show a long onboarding checklist
-
-Cause: a whole markdown document was mapped into a step instead of using a narrow wizard block.
-
-Fix:
-
-1. Move step-specific content into an explicit block such as `<!-- wizard:account_creation -->`.
-2. Keep only the admin-waiting content in that block.
-3. Rebuild locally or push to let the runner rebuild.
-4. Confirm `frontend/help/wizard-guide.json` no longer contains broad onboarding headings such as `High-level process` under admin-owned steps.
-
-### Screenshot changed but portal still shows the old image
-
-Check:
-
-1. The new image is committed under `docs/help/assets/`.
-2. The markdown references the correct `assets/<filename>`.
-3. The workflow copied it into `frontend/help/assets/`.
-4. The workflow synced it into `/opt/otp-relay/frontend/help/assets/`.
-5. The browser cache is cleared or the filename was changed intentionally.
-
-### Generated JSON is invalid
-
-Run:
-
-```bash
-python3 scripts/build_help_docs.py
-python3 -m json.tool frontend/help/wizard-guide.json >/dev/null
-```
-
-If invalid, inspect the markdown block that was edited most recently.
-
-### Runner shows Offline in GitHub
-
-Check the runner service on the Pi:
-
-```bash
-sudo systemctl status actions.runner.*.service
-sudo journalctl -u actions.runner.*.service -n 50
-```
-
-Restart if needed:
-
-```bash
-sudo systemctl restart actions.runner.*.service
-```
-
-Then re-run the workflow from GitHub Actions.
-
----
-
-## 14. Important rules
-
-- Maintainers normally edit only `docs/help/*.md` and `docs/help/assets/*` for guide content updates.
-- Use `<!-- wizard:step_id -->` blocks for user-facing wizard content.
-- Do not map one long document into several wizard steps unless the whole document is actually relevant to every mapped step.
-- Do not put maintainer instructions, deployment notes, or source-of-truth explanations inside wizard blocks.
-- `00-overview.md` should remain reference-only unless it contains user-facing onboarding content.
-- Do not hand-edit `frontend/help/wizard-guide.json`, `frontend/help/manifest.json`, `frontend/help/rendered/*`, or `frontend/help/assets/*`.
-- Do not hand-edit `/opt/otp-relay/frontend/help/*`; it is runner-deployed output.
-- Edit `frontend/app.jsx` only for guide behavior/loading changes.
-- Edit `frontend/style.css` only for guide layout/design changes.
-
----
-
-## 15. Summary
-
-For normal guide updates:
+For the portal UI deploy lane, the runner also needs write access to:
 
 ```text
-Edit docs/help/*.md and docs/help/assets/*
-        ↓
-Push to main
-        ↓
-Pi self-hosted runner rebuilds help output
-        ↓
-Runner syncs frontend/help/ to /opt/otp-relay/frontend/help/
-        ↓
-Portal reads /help/wizard-guide.json and /help/assets/*
+/opt/otp-relay/frontend/index.html
+/opt/otp-relay/frontend/style.css
+/opt/otp-relay/frontend/app.jsx
+/opt/otp-relay/frontend/guide.html
 ```
 
-Manual commands are for local validation and troubleshooting. The production Help Docs / RTA Wizard guide deployment is runner-driven.
+For the application-code deploy lane, the runner needs write access to application files deployed by `scripts/deploy_application_code.py`, including:
+
+```text
+/opt/otp-relay/main.py
+/opt/otp-relay/monitor.py
+```
+
+The install script should prepare these permissions on fresh installs. Existing servers may need a one-time permission repair after the install script is updated.
+
+---
+
+## 12. Troubleshooting
+
+### Workflow fails with `Permission denied` or `rsync error code 23`
+
+Cause: the self-hosted runner user cannot write to `/opt/otp-relay/frontend/help/`.
+
+Fix ownership on the server:
+
+```bash
+sudo chown -R <runner-user>:<runner-user> /opt/otp-relay/frontend/help
+find /opt/otp-relay/frontend/help -type d -exec sudo chmod 755 {} \;
+find /opt/otp-relay/frontend/help -type f -exec sudo chmod 644 {} \;
+```
+
+Then re-run the Help Docs workflow.
+
+### Markdown changed but the wizard text did not change
+
+Check:
+
+```bash
+python3 -m json.tool frontend/help/wizard-guide.json >/dev/null
+grep -R "your expected text" frontend/help/wizard-guide.json || true
+```
+
+Then verify the live endpoint:
+
+```bash
+curl -s http://127.0.0.1:8000/help/wizard-guide.json | grep "your expected text" || true
+```
+
+If the generated JSON contains the update but the live endpoint does not, the deployment sync did not complete or wrote to the wrong live folder.
+
+### Screenshot does not appear
+
+Check:
+
+```bash
+ls -l docs/help/assets/<filename>
+ls -l frontend/help/assets/<filename>
+ls -l /opt/otp-relay/frontend/help/assets/<filename>
+```
+
+Then verify the HTTP path:
+
+```bash
+curl -s -o /dev/null -w "asset=%{http_code}\n" http://127.0.0.1:8000/help/assets/<filename>
+```
+
+Expected:
+
+```text
+asset=200
+```
+
+### Pop-out guide opens but shows a blank or error page
+
+Check:
+
+```bash
+curl -i http://127.0.0.1:8000/guide.html
+ls -l /opt/otp-relay/frontend/guide.html
+```
+
+If the file exists but the route returns `404`, check that `main.py` mounts the frontend directory with an absolute path.
+
+---
+
+## 13. Important rules
+
+- Do not edit generated files under `frontend/help/` directly.
+- Do not edit live files under `/opt/otp-relay/frontend/help/` directly.
+- Edit user-facing guide content in `docs/help/*.md`.
+- Store source screenshots in `docs/help/assets/`.
+- Use explicit `<!-- wizard:step_id -->` blocks for wizard content.
+- Keep maintainer/deployment notes out of wizard blocks.
+- Keep `00-overview.md` reference-only if it contains maintainer-facing or pipeline-facing notes.
+- Use `frontend/app.jsx` only for guide behavior changes.
+- Use `frontend/style.css` only for guide layout/design changes.
+- Use `frontend/guide.html` only for pop-out guide shell changes.
+
+---
+
+## 14. Summary
+
+The Help Docs and RTA Wizard guide flow is:
+
+```text
+Maintainer edits docs/help/*.md and docs/help/assets/*
+        ↓
+Commit to portal branch
+        ↓
+Company-server self-hosted runner runs scripts/build_help_docs.py
+        ↓
+frontend/help/wizard-guide.json and assets are generated
+        ↓
+frontend/help/ is synced to /opt/otp-relay/frontend/help/
+        ↓
+Portal overlay and /guide.html pop-out load /help/wizard-guide.json
+```
+
+Key principle:
+
+**Guide content is maintained in markdown; generated output is deployed by the self-hosted runner; the live app directory is not hand-maintained.**
