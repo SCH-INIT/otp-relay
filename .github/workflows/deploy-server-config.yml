@@ -2,7 +2,7 @@ name: Deploy Server Config
 
 on:
   push:
-    branches: [ main ]
+    branches: [ portal ]
     paths:
       - "install.sh"
       - "update.sh"
