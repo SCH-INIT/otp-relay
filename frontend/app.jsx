@@ -1048,6 +1048,18 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
     setGuideOverlay({ stepId: null, page: 0 });
   }
 
+  function popOutGuide(step, page = 0) {
+    if (!step) return;
+    const url = '/guide.html?step=' + encodeURIComponent(step.id) + '&page=' + encodeURIComponent(page);
+    const features = 'popup=yes,width=1040,height=860,resizable=yes,scrollbars=yes';
+    const win = window.open(url, 'rtaWizardGuide', features);
+
+    if (win) {
+      win.focus();
+      closeGuideOverlay();
+    }
+  }
+
   function setGuidePage(page) {
     const max = Math.max(0, getGuidePages(guideStep, guideData).length - 1);
     setGuideOverlay(state => ({ ...state, page: Math.max(0, Math.min(page, max)) }));
@@ -1166,6 +1178,7 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
         page={guideOverlay.page}
         setPage={setGuidePage}
         onClose={closeGuideOverlay}
+        onPopOut={() => popOutGuide(guideStep, guideOverlay.page)}
       />
     )}
     </>
@@ -1191,7 +1204,7 @@ function GuideBlock({ block }) {
   return null;
 }
 
-function GuideOverlay({ step, guide, page, setPage, onClose }) {
+function GuideOverlay({ step, guide, page, setPage, onClose, onPopOut }) {
   const pages = getGuidePages(step, guide);
   const activePage = pages[page] || pages[0];
   const lastPage = pages.length - 1;
@@ -1262,7 +1275,10 @@ function GuideOverlay({ step, guide, page, setPage, onClose }) {
             <h2 id="guide-title" className="guide-modal-title">{step.title}</h2>
             <div className="sub">Step owner: {step.owner === 'admin' ? 'Admin' : 'You'} · Estimated time: {step.time}</div>
           </div>
-          <button className="guide-close" onClick={onClose} aria-label="Close guide">×</button>
+          <div className="guide-window-actions">
+            <button className="btn btn-secondary guide-popout" onClick={onPopOut} type="button">↗ Pop out</button>
+            <button className="guide-close" onClick={onClose} aria-label="Close guide">×</button>
+          </div>
         </div>
 
         <div className="guide-tabs">
