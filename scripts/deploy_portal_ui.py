@@ -12,6 +12,7 @@ ALLOWED_FILES = [
     Path("frontend/app.jsx"),
     Path("frontend/index.html"),
     Path("frontend/style.css"),
+    Path("frontend/guide.html"),
 ]
 
 
