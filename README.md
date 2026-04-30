@@ -25,8 +25,8 @@ RTA onboarding progress is server-backed so reminders and progress persist acros
 For a clickable architecture view with component descriptions, open the standalone system design page:
 
 [Open the interactive system design diagram](https://SCH-INIT.github.io/otp-relay-/system-design.html)
+> Tip: Use **Ctrl+Click** on Windows/Linux or **Cmd+Click** on Mac to open the diagram in a new tab.
 
-The HTML file is kept at the repository root so it can be linked from this README and published directly by GitHub Pages as `/system-design.html`.
 
 1. User opens the portal → enters their 2 or 3 character token → clicks **Claim my slot**
 2. If the queue is empty, they become the active user immediately. If someone is ahead of them, they enter the waiting room and are told not to trigger their OTP yet.
