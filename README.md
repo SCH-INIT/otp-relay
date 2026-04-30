@@ -165,6 +165,22 @@ sudo bash install.sh
 
 `install.sh` creates the venv, sets permissions, generates the TLS cert, configures nginx and both systemd services — all in one shot. It will not overwrite an existing `.env`.
 
+### Fresh target deployment sequence
+
+For a new Ubuntu 24.04 VM / company-server target, use the documented install-and-runner sequence:
+
+1. Clone the `portal` branch into `/opt/otp-relay`.
+2. Run `install.sh`.
+3. Configure `.env`.
+4. Start `otp-relay` and `otp-monitor`.
+5. Deploy the user list.
+6. Configure the self-hosted GitHub Actions runner.
+7. Add the required sudoers entries for server-config deployment.
+8. Re-run `install.sh` once after runner setup so deploy-target ownership is applied for the detected runner user.
+9. Trigger the workflows and verify the live portal.
+
+See [UPDATE-PIPELINE.md — Fresh target deployment sequence](./UPDATE-PIPELINE.md#fresh-target-deployment-sequence) for the full commands and verification steps.
+
 ## Optional: GitHub Actions runner setup
 
 If this server should also act as the self-hosted GitHub Actions runner for this repo, you can configure it after the main install completes.
