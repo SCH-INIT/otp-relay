@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# =============================================================================+
+# =============================================================================
 # install.sh — Fresh install of OTP Relay from the git repository
-# Ubuntu 24.04 LTS · Exchange SMTP · LAN only
+# Raspberry Pi OS (Debian 13 Trixie) · LAN only
 #
 # Usage:
-#   git clone git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
+#   git clone git@github.com:psi1703/otp-relay-pi-os.git /opt/otp-relay
 #   cd /opt/otp-relay
 #   sudo bash install.sh
-# =============================================================================+
+# =============================================================================
 
 set -euo pipefail
 
@@ -54,7 +54,7 @@ load_env_server_values() {
 }
 
 is_valid_ip() {
-  python3.12 - "$1" <<'PY'
+  python3 - "$1" <<'PY'
 import ipaddress
 import sys
 
@@ -101,15 +101,15 @@ select_install_server_values() {
 }
 
 echo -e "\n${BOLD}OTP Relay — Install${RESET}"
-echo -e "${DIM}Ubuntu 24.04 · Exchange SMTP${RESET}\n"
+echo -e "${DIM}Raspberry Pi OS (Debian Trixie) · LAN only${RESET}\n"
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 
 section "1/8  System packages"
 apt-get update -qq
 apt-get install -y -qq \
-  python3.12 \
-  python3.12-venv \
+  python3 \
+  python3-venv \
   python3-pip \
   nginx \
   openssl \
@@ -139,7 +139,7 @@ ok "data/ directory ready"
 
 section "4/8  Python virtual environment"
 if [[ ! -f "${INSTALL_DIR}/venv/bin/uvicorn" ]]; then
-  python3.12 -m venv "${INSTALL_DIR}/venv"
+  python3 -m venv "${INSTALL_DIR}/venv"
   "${INSTALL_DIR}/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv bcrypt markdown pyyaml
   ok "venv created and packages installed"
 else
@@ -153,6 +153,19 @@ section "5/8  Build Help Docs"
 cd "${INSTALL_DIR}"
 "${INSTALL_DIR}/venv/bin/python" scripts/build_help_docs.py
 ok "Help Docs built"
+
+# ── 5b. Remove .git from install directory ───────────────────────────────────
+# /opt/otp-relay is managed by the GitHub Actions runner going forward.
+# The runner _work clone is the only git repo — /opt/otp-relay receives
+# files copied by deploy scripts and must never be a git repo itself.
+
+section "5b/8  Detach git from install directory"
+if [[ -d "${INSTALL_DIR}/.git" ]]; then
+  rm -rf "${INSTALL_DIR}/.git"
+  ok "Removed .git — /opt/otp-relay is now deploy-target only, not a git repo"
+else
+  ok ".git already absent"
+fi
 
 # ── 6. Configure .env ─────────────────────────────────────────────────────────
 
@@ -178,7 +191,6 @@ find "${INSTALL_DIR}" -type f -not -path "${INSTALL_DIR}/venv/*" -exec chmod 644
 chmod +x "${INSTALL_DIR}/deploy_users.sh"
 chmod +x "${INSTALL_DIR}/test_otp_relay.py"
 chmod +x "${INSTALL_DIR}/install.sh"
-chmod +x "${INSTALL_DIR}/update.sh"
 chmod +x "${INSTALL_DIR}/monitor.py"
 chown root:otprelay "${INSTALL_DIR}/.env"
 chmod 640 "${INSTALL_DIR}/.env"
@@ -186,6 +198,9 @@ chown -R otprelay:otprelay "${INSTALL_DIR}/data"
 chmod 700 "${INSTALL_DIR}/data"
 [[ -f "${INSTALL_DIR}/data/users.xlsx" ]] && chmod 600 "${INSTALL_DIR}/data/users.xlsx"
 [[ -f "${INSTALL_DIR}/data/audit.log"  ]] && chmod 600 "${INSTALL_DIR}/data/audit.log"
+# Allow GitHub Actions runner user to write Help Docs output via rsync
+chown -R initbox:initbox "${INSTALL_DIR}/frontend/help"
+chmod -R 755 "${INSTALL_DIR}/frontend/help"
 ok "Permissions set"
 
 # ── 8. TLS certificate + nginx + systemd ─────────────────────────────────────
@@ -214,6 +229,12 @@ SERVER_HOSTNAME="${SERVER_HOSTNAME}" SERVER_IP="${SERVER_IP}" \
 
 ln -sf /etc/nginx/sites-available/otp-relay /etc/nginx/sites-enabled/otp-relay
 
+# Disable default nginx site if present — it conflicts on port 80/443
+if [[ -L /etc/nginx/sites-enabled/default ]]; then
+  rm /etc/nginx/sites-enabled/default
+  ok "Removed default nginx site (would conflict on port 80/443)"
+fi
+
 if nginx -t; then
   systemctl enable nginx --now
   systemctl reload nginx
@@ -223,10 +244,30 @@ else
   exit 1
 fi
 
+# Always stop any running instances before installing fresh unit files.
+# This prevents stale processes from surviving a reinstall and running
+# with a mismatched (old) ExecStart line.
+info "Stopping any running otp-relay / otp-monitor instances..."
+systemctl stop otp-relay  2>/dev/null || true
+systemctl stop otp-monitor 2>/dev/null || true
+
 cp "${INSTALL_DIR}/systemd/otp-relay.service"   /etc/systemd/system/otp-relay.service
 cp "${INSTALL_DIR}/systemd/otp-monitor.service" /etc/systemd/system/otp-monitor.service
 systemctl daemon-reload
-ok "systemd unit files installed"
+systemctl enable otp-relay otp-monitor
+
+# Verify systemd picked up the correct ExecStart from the repo unit file
+EXPECTED_EXEC="$(grep '^ExecStart=' "${INSTALL_DIR}/systemd/otp-relay.service")"
+LOADED_EXEC="$(systemctl cat otp-relay | grep '^ExecStart=')"
+if [[ "${EXPECTED_EXEC}" != "${LOADED_EXEC}" ]]; then
+  fail "systemd unit mismatch after daemon-reload — expected:"
+  fail "  ${EXPECTED_EXEC}"
+  fail "  got: ${LOADED_EXEC}"
+  fail "Run: sudo systemctl daemon-reload && sudo systemctl start otp-relay"
+  exit 1
+fi
+
+ok "systemd unit files installed and verified"
 
 echo ""
 warn "Application services were intentionally NOT started."
@@ -250,10 +291,10 @@ echo -e "  Users:    sudo bash ${INSTALL_DIR}/deploy_users.sh"
 echo -e "  Logs:     sudo journalctl -u otp-relay -f"
 echo -e "  Monitor:  sudo journalctl -u otp-monitor -f"
 echo -e "  Test:     python3 ${INSTALL_DIR}/test_otp_relay.py"
-echo -e "  Update:   sudo bash ${INSTALL_DIR}/update.sh"
+echo -e "  Updates:  push to GitHub — runner deploys automatically"
 echo ""
 
 # Optional next step:
 # If this server should also act as a GitHub Actions self-hosted runner,
 # run the following after install completes:
-#   sudo bash /opt/otp-relay/setup_runner.sh <RUNNER_TOKEN>
+#   sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN>
