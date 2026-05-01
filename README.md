@@ -258,7 +258,7 @@ Application code, portal UI, and Help Docs deploy through runner-managed file ow
 
 Server-config deployment touches nginx/systemd targets and requires specific passwordless sudo entries for the runner user.
 
-See [UPDATE-PIPELINE.md — Fresh target deployment sequence](./UPDATE-PIPELINE.md#fresh-target-deployment-sequence) for the full sudoers block, commands, workflow triggers, and verification steps.
+Server-config deployment requires limited sudoers entries for the self-hosted runner. See [UPDATE-PIPELINE.md — server-config sudoers entries](./UPDATE-PIPELINE.md#server-config-sudoers).
 
 ### 8. Verify the portal
 
