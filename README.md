@@ -52,6 +52,7 @@ Only one user is active at a time. This is a deliberate safety constraint: becau
 Application code, portal UI, Help Docs, and server configuration are deployed through separate GitHub Actions workflows on the company-server self-hosted runner.
 
 See [UPDATE-PIPELINE.md](./UPDATE-PIPELINE.md) for deployment flow, workflow triggers, server-config deployment behavior, sudo requirements, and troubleshooting.
+
 ## Repository Structure
 
 ```
@@ -154,114 +155,82 @@ otp-relay/
 
 ## Fresh Install (Ubuntu 24.04)
 
+Use this sequence for a new Ubuntu 24.04 VM / company-server target.
+
+### 1. Clone the portal branch
+
 ```bash
-# Clone the repo into the install directory
 sudo git clone -b portal git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
 cd /opt/otp-relay
-
-# Configure self-hosted runner to allow install.sh to detect the runner account from /home/<runner-user>/actions-runner and assign ownership correctly the first time.
-sudo bash setup_action-runner.sh <RUNNER_TOKEN>
-
-# Run the installer
-sudo bash install.sh
 ```
 
-`install.sh` creates the venv, sets permissions, generates the TLS cert, configures nginx and both systemd services — all in one shot. It will not overwrite an existing `.env`.
+### 2. Configure the self-hosted runner
 
-### Fresh target deployment sequence
+Configure the self-hosted GitHub Actions runner **before** running `install.sh`. This lets the installer detect the runner account and assign deploy-target ownership correctly on the first install.
 
-For a new Ubuntu 24.04 VM / company-server target:
+Create a fresh runner registration token from:
 
-1. Clone the `portal` branch into `/opt/otp-relay`.
-2. Configure the self-hosted GitHub Actions runner with `setup_action-runner.sh`.
-3. Run `install.sh` once.
-4. Configure `/opt/otp-relay/.env`.
-5. Start `otp-relay` and `otp-monitor`.
-6. Deploy the user list.
-7. Add sudoers entries for server-config deployment.
-8. Trigger workflows from GitHub and verify the live portal.
+```text
+SCH-INIT/otp-relay → Settings → Actions → Runners → New self-hosted runner
+```
 
-See [UPDATE-PIPELINE.md — Fresh target deployment sequence](./UPDATE-PIPELINE.md#fresh-target-deployment-sequence) for full commands and verification steps.
-
-
-## Optional: GitHub Actions runner setup
-
-If this server should also act as the self-hosted GitHub Actions runner for this repo, you can configure it after the main install completes.
-
-### Before you start
-
-You will need a **fresh GitHub runner registration token**.
-
-Get it from:
-
-1. Open the repository on GitHub: `SCH-INIT/otp-relay`
-2. Go to **Settings**
-3. Open **Actions**
-4. Open **Runners**
-5. Click **New self-hosted runner**
-6. Copy the temporary registration token GitHub shows
-
-**Important:**
-- the token is temporary
-- it expires after a short time
-- if the script says the token is invalid or expired, go back to GitHub and generate a new one
-
-### Run the setup script
+Then run:
 
 ```bash
 sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN>
 ```
 
-The script will:
+The setup script auto-detects the server architecture and registers the runner with the matching label:
 
-- ask you to choose the platform (`ARM64` or `X64`)
-- download the correct GitHub Actions runner package
-- configure the runner for this repo
-- install the runner as a system service
-- start the runner automatically
-
-After running the installer, disable the default nginx site which would otherwise interfere:
-
-```bash
-sudo rm /etc/nginx/sites-enabled/default
-sudo systemctl reload nginx
+```text
+self-hosted,Linux,X64
 ```
 
-### Manual Help Docs build (only if needed)
+or:
 
-Help Docs are normally deployed automatically by the GitHub Actions workflow.  
-If you ever need to build them manually on the server, use the app venv Python, not plain `python3`:
-
-```bash
-cd /opt/otp-relay
-./venv/bin/python scripts/build_help_docs.py
+```text
+self-hosted,Linux,ARM64
 ```
 
-### After running the installer
+Optional overrides:
 
-Edit `.env`:
+```bash
+OTP_RELAY_RUNNER_USER=<runner-user> sudo -E bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN>
+sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN> x64
+sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN> arm64
+```
+
+### 3. Run the installer once
+
+```bash
+sudo bash install.sh
+```
+
+`install.sh` creates the virtual environment, installs dependencies, builds Help Docs output, configures nginx/TLS/systemd, removes `.git` from `/opt/otp-relay`, and assigns deploy-target ownership for the detected runner user.
+
+After install, `/opt/otp-relay` is the live application directory, not a git working copy.
+
+### 4. Configure `.env`
 
 ```bash
 sudo nano /opt/otp-relay/.env
 ```
 
-Key values to fill in:
+At minimum, confirm or set:
 
 | Variable | Notes |
 |---|---|
 | `SERVER_HOSTNAME` | e.g. `srvotp26.init-db.lan` — used for nginx config, TLS cert, and portal URL |
 | `SERVER_IP` | Server LAN IP — added to TLS cert SAN so the iPhone Shortcut can connect by IP if needed |
-| `SMS_SECRET_TOKEN` | Generate: `python3 -c "import secrets; print(secrets.token_hex(32))"` — paste into Shortcut |
-| `CLAIM_EXPIRY_SEC` | Seconds the active user has to trigger their OTP before being evicted (default: `90`) |
-| `OTP_DISPLAY_SEC` | Seconds the OTP stays visible on screen after arrival (default: `285` = 4 min 45 sec) |
-| `WHATSAPP_API_KEY` | From CallMeBot registration (see Monitor & Alerts section) |
-| `WHATSAPP_RECIPIENT` | IT contact number in full international format: `+971501234567` |
-| `PHONE_IP` | Static IP of the company iPhone — ask IT to set a DHCP reservation |
-| `PHONE_INTERFACE` | Network interface name — check with `ip link` (typically `ens33`) |
+| `SMS_SECRET_TOKEN` | Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `PHONE_IP` | Static IP of the company iPhone |
+| `PHONE_INTERFACE` | Network interface name, for example `ens33` |
+| `WHATSAPP_API_KEY` | From CallMeBot registration |
+| `WHATSAPP_RECIPIENT` | IT contact number in full international format |
 
-SMTP settings are only needed if you use `/admin/smtp-test` for Exchange diagnostics. They play no role in OTP delivery.
+SMTP settings are only needed if you use `/admin/smtp-test` for Exchange diagnostics. They do not participate in OTP delivery.
 
-Then start the services:
+### 5. Start services
 
 ```bash
 sudo systemctl start otp-relay
@@ -269,24 +238,55 @@ sudo systemctl start otp-monitor
 sudo systemctl status otp-relay otp-monitor
 ```
 
-### Post-install verification
+### 6. Deploy the user list
 
-Run these checks after a fresh install:
+Place the Excel file in your home directory as:
 
 ```bash
-sudo systemctl status otp-relay --no-pager
-sudo systemctl status otp-monitor --no-pager
-sudo nginx -t
-cd /opt/otp-relay
-./venv/bin/python -c "import bcrypt; print('bcrypt OK')"
-./venv/bin/python -c "import markdown, yaml; print('help docs deps OK')"
-ls -l /opt/otp-relay/data
+~/otp-relay-users.xlsx
 ```
 
-Deploy the user list (place `otp-relay-users.xlsx` in your home directory first):
+Then run:
 
 ```bash
 sudo bash /opt/otp-relay/deploy_users.sh
+```
+
+### 7. Add server-config sudoers entries
+
+Application code, portal UI, and Help Docs deploy through runner-managed file ownership.
+
+Server-config deployment touches nginx/systemd targets and requires specific passwordless sudo entries for the runner user.
+
+See [UPDATE-PIPELINE.md — Fresh target deployment sequence](./UPDATE-PIPELINE.md#fresh-target-deployment-sequence) for the full sudoers block, commands, workflow triggers, and verification steps.
+
+### 8. Verify the portal
+
+```bash
+curl -sk -o /dev/null -w "root=%{http_code}\n" https://127.0.0.1/
+curl -sk -o /dev/null -w "app=%{http_code}\n" https://127.0.0.1/app.jsx
+curl -sk -o /dev/null -w "css=%{http_code}\n" https://127.0.0.1/style.css
+curl -sk -o /dev/null -w "guide=%{http_code}\n" https://127.0.0.1/guide.html
+curl -sk -o /dev/null -w "wizard=%{http_code}\n" https://127.0.0.1/help/wizard-guide.json
+```
+
+Expected:
+
+```text
+root=200
+app=200
+css=200
+guide=200
+wizard=200
+```
+
+Normal update flow after this point:
+
+```text
+maintainer edits the portal branch on GitHub
+→ self-hosted runner checks out the repo
+→ workflow deploys selected files into /opt/otp-relay
+→ live portal updates
 ```
 
 ---
