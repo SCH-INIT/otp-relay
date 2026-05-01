@@ -245,7 +245,7 @@ sudo systemctl status otp-relay otp-monitor
 Place the Excel file in your home directory as:
 
 ```bash
-~/otp-relay-users.xlsx
+~/users.xlsx
 ```
 
 Then run:
