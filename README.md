@@ -1,4 +1,4 @@
-# OTP Relay
+# OTP Relay Portal
 **Ubuntu 24.04 LTS · Company LAN · On-screen OTP delivery**
 Server: `srvotp26.init-db.lan` · Portal: `https://srvotp26.init-db.lan`
 
