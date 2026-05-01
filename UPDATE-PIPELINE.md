@@ -85,7 +85,7 @@ Deployment scripts copy from the runner workspace into `/opt/otp-relay`, or into
 /etc/nginx/sites-available/
 ```
 
-`/opt/otp-relay` is the live app directory. It is not the source-of-truth git repo after installation.
+`/opt/otp-relay` is the live app directory. It is not the source-of-truth git repo after installation. See [Operational rules](#16-operational-rules).
 
 ---
 
@@ -243,6 +243,8 @@ and syncs the generated `frontend/help/` output into:
 
 No maintainer should manually edit `frontend/help/` or `/opt/otp-relay/frontend/help/` for normal Help Docs / wizard-guide updates.
 
+For full build and deployment detail, including wizard block syntax, screenshot rules, and permission repair, see [HELP-DOCS-DEPLOYMENT.md](./HELP-DOCS-DEPLOYMENT.md).
+
 ### Important rule
 
 The RTA Wizard floating guide and pop-out guide are markdown-driven. User-facing guide text should be maintained in `docs/help/*.md` using explicit wizard step blocks, and screenshots should be maintained in `docs/help/assets/`.
@@ -286,7 +288,7 @@ scripts/deploy_server_config.py
 
 ### What makes this lane different
 
-This workflow touches **root-managed server files**, so it requires carefully limited `sudo` access for the GitHub runner user.
+This workflow touches **root-managed server files**, so it requires carefully limited `sudo` access for the GitHub runner user. See [Sudo model](#9-sudo-model-for-server-config-deploy) and [README — server-config sudoers entries](./README.md#7-add-server-config-sudoers-entries).
 
 ---
 
@@ -483,6 +485,8 @@ Runner-managed live files include:
 /opt/otp-relay/frontend/help/
 ```
 
+For permission repair commands when runner ownership needs to be restored, see [HELP-DOCS-DEPLOYMENT.md — Permissions required for runner deployment](./HELP-DOCS-DEPLOYMENT.md#11-permissions-required-for-runner-deployment).
+
 ## Root-managed targets
 
 The following areas remain root-managed:
@@ -554,6 +558,8 @@ scripts/
 - copies `docs/help/assets/` into generated `frontend/help/assets/`
 - syncs generated `frontend/help/` output to the live portal
 
+See [HELP-DOCS-DEPLOYMENT.md](./HELP-DOCS-DEPLOYMENT.md) for the full build and deployment flow.
+
 ## Server config workflow
 
 - validates shell scripts
@@ -617,6 +623,8 @@ The self-hosted runner automatically:
 
 Manual deployment is only needed for emergency/debug work. Normal maintainers should not SSH into the server to rebuild or copy Help Docs files.
 
+For wizard block syntax, step IDs, screenshot rules, and local build checks, see [HELP-DOCS-DEPLOYMENT.md](./HELP-DOCS-DEPLOYMENT.md).
+
 ## Update server-managed files
 
 Edit:
@@ -665,19 +673,7 @@ sudo nginx -t
 
 ## Check frontend and guide endpoints
 
-```bash
-curl -s -o /dev/null -w "root=%{http_code}\n" http://127.0.0.1:8000/
-curl -s -o /dev/null -w "guide=%{http_code}\n" http://127.0.0.1:8000/guide.html
-curl -s -o /dev/null -w "wizard=%{http_code}\n" http://127.0.0.1:8000/help/wizard-guide.json
-```
-
-Expected:
-
-```text
-root=200
-guide=200
-wizard=200
-```
+See [README — Verify the portal](./README.md#8-verify-the-portal) for the full curl verification block.
 
 ## Check Actions logs for timestamped deployment output
 
@@ -718,15 +714,7 @@ Cause:
 
 - the generated Help Docs output folder is not owned by the self-hosted runner user
 
-Fix:
-
-- run `install.sh` from the current `portal` branch, or repair ownership for `/opt/otp-relay/frontend/help/`
-
-Verify:
-
-```bash
-ls -ld /opt/otp-relay/frontend/help
-```
+Fix and verification commands: see [HELP-DOCS-DEPLOYMENT.md — Permissions required for runner deployment](./HELP-DOCS-DEPLOYMENT.md#11-permissions-required-for-runner-deployment).
 
 ## Problem: `/guide.html` returns `{"detail":"Not Found"}`
 
@@ -762,7 +750,7 @@ Cause:
 
 Fix:
 
-- add exact sudoers entries for the exact command paths used by the script
+- add exact sudoers entries for the exact command paths used by the script — see [Section 9](#9-sudo-model-for-server-config-deploy)
 
 ## Problem: `systemctl` restart works manually but fails in Actions
 
@@ -809,6 +797,8 @@ Check:
 - `/opt/otp-relay/frontend/help/wizard-guide.json` exists on the server
 - the browser is not showing cached portal data
 
+See also [HELP-DOCS-DEPLOYMENT.md — Troubleshooting](./HELP-DOCS-DEPLOYMENT.md#12-troubleshooting).
+
 Verify from the server:
 
 ```bash
@@ -851,8 +841,8 @@ This project supports a safer multi-lane update pipeline:
 
 - **Application code deploy** for Python runtime files
 - **Portal UI deploy** for frontend files, including the pop-out guide page
-- **Help Docs / RTA Wizard guide deploy** for markdown guide content, screenshots, and generated wizard-guide JSON
-- **Server config deploy** for shell scripts, systemd units, and nginx template updates
+- **Help Docs / RTA Wizard guide deploy** for markdown guide content, screenshots, and generated wizard-guide JSON — see [HELP-DOCS-DEPLOYMENT.md](./HELP-DOCS-DEPLOYMENT.md)
+- **Server config deploy** for shell scripts, systemd units, and nginx template updates — sudo requirements in [Section 9](#9-sudo-model-for-server-config-deploy)
 
 The core principle is simple:
 
