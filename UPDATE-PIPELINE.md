@@ -22,136 +22,6 @@ This document explains:
 
 ---
 
-<a id="fresh-target-deployment-sequence"></a>
-
-## Fresh target deployment sequence
-
-Use this sequence when preparing a new Ubuntu 24.04 VM / company-server target. This is the command sequence linked from `README.md`.
-
-### 1. Clone the portal branch
-
-```bash
-sudo git clone -b portal git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
-cd /opt/otp-relay
-```
-
-### 2. Configure the self-hosted GitHub Actions runner
-
-Create a fresh runner registration token in GitHub:
-
-```text
-Repository -> Settings -> Actions -> Runners -> New self-hosted runner
-```
-
-Then run the setup script from the cloned repo:
-
-```bash
-sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN>
-```
-
-The setup script auto-detects the server architecture and registers the runner with the matching label, such as `self-hosted,Linux,X64` or `self-hosted,Linux,ARM64`.
-
-If you need to override the runner account or architecture:
-
-```bash
-OTP_RELAY_RUNNER_USER=<runner-user> sudo -E bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN>
-sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN> x64
-sudo bash /opt/otp-relay/setup_action-runner.sh <RUNNER_TOKEN> arm64
-```
-
-### 3. Run the installer once
-
-```bash
-sudo bash /opt/otp-relay/install.sh
-```
-
-`install.sh` installs packages, creates the service account and virtual environment, builds Help Docs output, configures nginx/TLS/systemd, removes `.git` from `/opt/otp-relay`, and assigns deploy-target ownership for the detected runner user.
-
-After install, `/opt/otp-relay` is the live application directory, not a git working copy.
-
-### 4. Configure the environment
-
-```bash
-sudo nano /opt/otp-relay/.env
-```
-
-At minimum, confirm or set:
-
-```text
-SERVER_HOSTNAME
-SERVER_IP
-SMS_SECRET_TOKEN
-PHONE_IP
-PHONE_INTERFACE
-WHATSAPP_API_KEY
-WHATSAPP_RECIPIENT
-```
-
-### 5. Start services
-
-```bash
-sudo systemctl start otp-relay
-sudo systemctl start otp-monitor
-sudo systemctl status otp-relay otp-monitor --no-pager
-```
-
-### 6. Deploy the user list
-
-Place the Excel file in the server user's home directory as:
-
-```bash
-~/otp-relay-users.xlsx
-```
-
-Then run:
-
-```bash
-sudo bash /opt/otp-relay/deploy_users.sh
-```
-
-### 7. Add sudoers entries for server-config deployment
-
-Application code, portal UI, and Help Docs deploy through runner-managed file ownership. Server-config deployment touches nginx/systemd targets and needs the limited sudoers entries documented in [Sudo model for server-config deploy](#9-sudo-model-for-server-config-deploy).
-
-### 8. Verify the live portal
-
-```bash
-curl -sk -o /dev/null -w "root=%{http_code}\n" https://127.0.0.1/
-curl -sk -o /dev/null -w "app=%{http_code}\n" https://127.0.0.1/app.jsx
-curl -sk -o /dev/null -w "css=%{http_code}\n" https://127.0.0.1/style.css
-curl -sk -o /dev/null -w "guide=%{http_code}\n" https://127.0.0.1/guide.html
-curl -sk -o /dev/null -w "wizard=%{http_code}\n" https://127.0.0.1/help/wizard-guide.json
-```
-
-Expected:
-
-```text
-root=200
-app=200
-css=200
-guide=200
-wizard=200
-```
-
-### 9. Test runner-driven deployment
-
-From GitHub, manually trigger or push changes for these workflows on the `portal` branch:
-
-```text
-Deploy Application Code
-Deploy Portal UI
-Deploy Help Docs
-Deploy Server Config
-```
-
-Normal update flow after this point:
-
-```text
-maintainer edits the portal branch on GitHub
--> self-hosted runner checks out the repo
--> workflow deploys selected files into /opt/otp-relay
--> live portal updates
-```
 
 # 1. Architecture
 
@@ -546,6 +416,9 @@ The server-config deployment script should emit timestamped logs like:
 This makes Actions logs easier to debug and confirms the exact order of operations.
 
 ---
+
+<a id="server-config-sudoers"></a>
+<a id="fresh-target-deployment-sequence"></a>
 
 # 9. Sudo model for server-config deploy
 
