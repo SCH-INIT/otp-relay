@@ -2,13 +2,7 @@
 
 This document describes how Help Docs, screenshot assets, and the RTA Wizard floating guide are maintained for the `SCH-INIT/otp-relay` `portal` branch.
 
-The `portal` branch targets the company server running Ubuntu 24.04 LTS. The live application directory is:
-
-```bash
-/opt/otp-relay
-```
-
-`/opt/otp-relay` is a deploy target only. It is not the git working copy. Repository changes are made on GitHub, then the company-server self-hosted runner checks out the repo in its runner workspace and deploys selected generated files to the live app directory.
+The `portal` branch targets the company server running Ubuntu 24.04 LTS. The live application directory is `/opt/otp-relay` — a deploy target only, not a git working copy. See [UPDATE-PIPELINE.md — Operational rules](./UPDATE-PIPELINE.md#16-operational-rules) for the full deployment model.
 
 ---
 
@@ -34,6 +28,8 @@ Then they commit the change to GitHub. The self-hosted runner on the company ser
 7. syncs `frontend/help/` into `/opt/otp-relay/frontend/help/`.
 
 Normal guide-content updates do **not** require editing `frontend/app.jsx`.
+
+For the four-lane pipeline overview and workflow trigger details, see [UPDATE-PIPELINE.md](./UPDATE-PIPELINE.md).
 
 ---
 
@@ -167,9 +163,9 @@ The pop-out guide page is served from:
 
 ## 7. Workflow trigger
 
-The Help Docs deployment workflow should run when source guide content, assets, or the build script changes.
+The Help Docs deployment workflow runs when source guide content, assets, or the build script changes.
 
-Typical trigger paths:
+Trigger paths:
 
 ```yaml
 paths:
@@ -178,14 +174,16 @@ paths:
   - ".github/workflows/deploy-help-docs.yml"
 ```
 
-The workflow should build the generated Help output and sync it into the live app directory:
+The workflow builds the generated Help output and syncs it into the live app directory:
 
 ```bash
 python3 scripts/build_help_docs.py
 rsync -rltvz --delete --no-group --no-owner frontend/help/ /opt/otp-relay/frontend/help/
 ```
 
-The workflow is expected to run as the self-hosted runner user on the company server. The install script prepares `/opt/otp-relay/frontend/help/` ownership so the runner can write this output without using `sudo` inside the workflow.
+The workflow runs as the self-hosted runner user on the company server. The install script prepares `/opt/otp-relay/frontend/help/` ownership so the runner can write this output without using `sudo` inside the workflow.
+
+For the sudo model that governs server-config changes (systemd, nginx), see [UPDATE-PIPELINE.md — Sudo model](./UPDATE-PIPELINE.md#9-sudo-model-for-server-config-deploy).
 
 ---
 
@@ -260,21 +258,7 @@ Those commands should not return user-facing wizard content.
 
 ## 10. Live verification on the server
 
-After the workflow deploys, verify from the company server:
-
-```bash
-curl -s -o /dev/null -w "wizard=%{http_code}\n" http://127.0.0.1:8000/help/wizard-guide.json
-curl -s -o /dev/null -w "guide=%{http_code}\n" http://127.0.0.1:8000/guide.html
-curl -s -o /dev/null -w "root=%{http_code}\n" http://127.0.0.1:8000/
-```
-
-Expected:
-
-```text
-wizard=200
-guide=200
-root=200
-```
+After the workflow deploys, verify from the company server using the curl commands in [README — Verify the portal](./README.md#8-verify-the-portal).
 
 If `/guide.html` returns `{"detail":"Not Found"}`, check:
 
@@ -295,7 +279,7 @@ The self-hosted runner user must be able to write generated Help output:
 /opt/otp-relay/frontend/help/
 ```
 
-The install script should detect the runner user and set ownership for runner-managed frontend paths. If a one-time live repair is needed, run this on the server, replacing `<runner-user>` with the actual self-hosted runner account:
+The install script detects the runner user and sets ownership for runner-managed frontend paths. If a one-time live repair is needed, run this on the server, replacing `<runner-user>` with the actual self-hosted runner account:
 
 ```bash
 sudo mkdir -p /opt/otp-relay/frontend/help
@@ -313,14 +297,16 @@ For the portal UI deploy lane, the runner also needs write access to:
 /opt/otp-relay/frontend/guide.html
 ```
 
-For the application-code deploy lane, the runner needs write access to application files deployed by `scripts/deploy_application_code.py`, including:
+For the application-code deploy lane, the runner needs write access to:
 
 ```text
 /opt/otp-relay/main.py
 /opt/otp-relay/monitor.py
 ```
 
-The install script should prepare these permissions on fresh installs. Existing servers may need a one-time permission repair after the install script is updated.
+The install script prepares these permissions on fresh installs. Existing servers may need a one-time permission repair after the install script is updated.
+
+For the full ownership model including root-managed targets, see [UPDATE-PIPELINE.md — File and command ownership model](./UPDATE-PIPELINE.md#10-file-and-command-ownership-model).
 
 ---
 
@@ -330,15 +316,7 @@ The install script should prepare these permissions on fresh installs. Existing 
 
 Cause: the self-hosted runner user cannot write to `/opt/otp-relay/frontend/help/`.
 
-Fix ownership on the server:
-
-```bash
-sudo chown -R <runner-user>:<runner-user> /opt/otp-relay/frontend/help
-find /opt/otp-relay/frontend/help -type d -exec sudo chmod 755 {} \;
-find /opt/otp-relay/frontend/help -type f -exec sudo chmod 644 {} \;
-```
-
-Then re-run the Help Docs workflow.
+Fix ownership on the server (see [Section 11](#11-permissions-required-for-runner-deployment)), then re-run the Help Docs workflow.
 
 ### Markdown changed but the wizard text did not change
 
@@ -428,3 +406,5 @@ Portal overlay and /guide.html pop-out load /help/wizard-guide.json
 Key principle:
 
 **Guide content is maintained in markdown; generated output is deployed by the self-hosted runner; the live app directory is not hand-maintained.**
+
+For the four-lane pipeline overview, see [UPDATE-PIPELINE.md](./UPDATE-PIPELINE.md).
