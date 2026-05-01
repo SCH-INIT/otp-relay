@@ -242,7 +242,7 @@ sudo systemctl status otp-relay otp-monitor
 
 ### 6. Deploy the user list
 
-Place the Excel file in your home directory as:
+Place the Excel file in live app directory as:
 
 ```bash
  /opt/otp-relay/users.xlsx
