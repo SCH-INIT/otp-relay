@@ -53,6 +53,8 @@ Application code, portal UI, Help Docs, and server configuration are deployed th
 
 See [UPDATE-PIPELINE.md](./UPDATE-PIPELINE.md) for deployment flow, workflow triggers, server-config deployment behavior, sudo requirements, and troubleshooting.
 
+See [HELP-DOCS-DEPLOYMENT.md](./HELP-DOCS-DEPLOYMENT.md) for the Help Docs and RTA Wizard guide build flow, wizard block syntax, screenshot rules, and permission repair.
+
 ## Repository Structure
 
 ```
@@ -208,7 +210,7 @@ sudo bash install.sh
 
 `install.sh` creates the virtual environment, installs dependencies, builds Help Docs output, configures nginx/TLS/systemd, removes `.git` from `/opt/otp-relay`, and assigns deploy-target ownership for the detected runner user.
 
-After install, `/opt/otp-relay` is the live application directory, not a git working copy.
+After install, `/opt/otp-relay` is the live application directory, not a git working copy. See [UPDATE-PIPELINE.md — Operational rules](./UPDATE-PIPELINE.md#16-operational-rules).
 
 ### 4. Configure `.env`
 
@@ -258,9 +260,11 @@ Application code, portal UI, and Help Docs deploy through runner-managed file ow
 
 Server-config deployment touches nginx/systemd targets and requires specific passwordless sudo entries for the runner user.
 
-Server-config deployment requires limited sudoers entries for the self-hosted runner. See [UPDATE-PIPELINE.md — server-config sudoers entries](./UPDATE-PIPELINE.md#server-config-sudoers).
+See [UPDATE-PIPELINE.md — Sudo model for server-config deploy](./UPDATE-PIPELINE.md#server-config-sudoers) for the required sudoers entries.
 
 ### 8. Verify the portal
+
+<a id="8-verify-the-portal"></a>
 
 ```bash
 curl -sk -o /dev/null -w "root=%{http_code}\n" https://127.0.0.1/
@@ -300,7 +304,7 @@ sudo bash /opt/otp-relay/update.sh --no-restart  # full sync without restart
 
 > **Warning**
 > `update.sh` is the legacy full-sync path. The normal portal-branch flow is GitHub edit/push → self-hosted runner → deploy scripts copy changed files into `/opt/otp-relay`.
-> Do not treat `/opt/otp-relay` as a git working copy; it is the live application directory.
+> Do not treat `/opt/otp-relay` as a git working copy; it is the live application directory. See [UPDATE-PIPELINE.md — Operational rules](./UPDATE-PIPELINE.md#16-operational-rules).
 
 `update.sh` automatically detects changes to systemd unit files and re-copies them to `/etc/systemd/system/`, so unit changes deploy without manual steps.
 
@@ -540,6 +544,8 @@ grep import_skipped /opt/otp-relay/data/audit.log
 ---
 
 ## Day-to-Day Operations
+
+For the day-to-day update flow (pushing code, UI, docs, or server config changes), see [UPDATE-PIPELINE.md — Day-to-day usage](./UPDATE-PIPELINE.md#13-day-to-day-usage).
 
 ```bash
 # Service status
