@@ -10,9 +10,10 @@ const CONFIG = {
 
 const API = {
   async json(url, options = {}) {
+    const { headers, ...fetchOptions } = options;
     const res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-      ...options,
+      ...fetchOptions,
+      headers: { 'Content-Type': 'application/json', ...(headers || {}) },
     });
     let data = null;
     try { data = await res.json(); } catch { data = null; }
@@ -52,7 +53,7 @@ const API = {
   adminLog(session) { return this.json('/admin/log?limit=500', { headers: session ? { 'X-Admin-Session': session } : {} }); },
   adminConfig(session) { return this.json('/admin/config', { headers: session ? { 'X-Admin-Session': session } : {} }); },
   saveAdminConfig(session, payload) {
-    return this.json('/admin/config', { method: 'POST', headers: { 'X-Admin-Session': session }, body: JSON.stringify({admin_tokens: payload }) });
+    return this.json('/admin/config', { method: 'POST', headers: { 'X-Admin-Session': session }, body: JSON.stringify({ admin_tokens: payload }) });
   },
   notifyAdminTask(payload) { return this.json('/api/onboard/notify', { method: 'POST', body: JSON.stringify(payload) }); },
 };
