@@ -51,7 +51,10 @@ const API = {
   adminUsers(session) { return this.json('/admin/users', { headers: session ? { 'X-Admin-Session': session } : {} }); },
   adminLog(session) { return this.json('/admin/log?limit=500', { headers: session ? { 'X-Admin-Session': session } : {} }); },
   adminConfig(session) { return this.json('/admin/config', { headers: session ? { 'X-Admin-Session': session } : {} }); },
-  saveAdminConfig(session, admin_tokens) { return this.json('/admin/config', { method: 'POST', headers: { 'X-Admin-Session': session }, body: JSON.stringify({ admin_tokens }) }); },
+  saveAdminConfig(session, payload) {
+    const body = Array.isArray(payload) ? { admin_tokens: payload } : { admin_tokens: payload?.admin_tokens || [] };
+    return this.json('/admin/config', { method: 'POST', headers: { 'X-Admin-Session': session }, body: JSON.stringify(body) });
+  },
   notifyAdminTask(payload) { return this.json('/api/onboard/notify', { method: 'POST', body: JSON.stringify(payload) }); },
 };
 
@@ -552,7 +555,7 @@ function App() {
   const [openStep, setOpenStep] = useState(null);
   const [faqOpen, setFaqOpen] = useState({});
   const [otp, setOtp] = useState({ panel: 'claim', message: '', position: 1, waitEstimate: 0, queueDepth: 0, otpValue: '———', activeRemaining: CONFIG.CLAIM_EXPIRY_SEC, otpRemaining: CONFIG.OTP_DISPLAY_SEC, token: '' });
-  const [admin, setAdmin] = useState({ session: sessionStorage.getItem('adminSession') || '', configured: false, mode: 'login', error: '', credential: '', current: '', confirm: '', data: null, loading: false, configTokens: 'JA, AM, CS' });
+  const [admin, setAdmin] = useState({ session: sessionStorage.getItem('adminSession') || '', configured: false, mode: 'login', error: '', credential: '', current: '', confirm: '', data: null, loading: false, configTokens: 'JPR, AMD, SCH' });
 
   useEffect(() => {
     API.adminAuthStatus().then(d => setAdmin(s => ({ ...s, configured: !!d.configured, mode: d.configured ? 'login' : 'setup' }))).catch(() => {});
@@ -760,7 +763,7 @@ function App() {
         API.adminQueue(session).catch(() => ({ queue: [] })),
         API.adminUsers(session).catch(() => ({ count: 0 })),
         API.adminLog(session).catch(() => ({ total: 0, entries: [] })),
-        API.adminConfig(session).catch(() => ({ admin_tokens: ['JA','AM','CS'] })),
+        API.adminConfig(session).catch(() => ({ admin_tokens: ['JPR','AMD','SCH'] })),
       ]);
       const mergedUsers = mergeAdminUsers(wizard.users || [], users.users || []);
       setAdmin(s => ({ ...s, data: { users: mergedUsers, queue: queue.queue || [], log: log.entries || [], logTotal: log.total || 0, userCount: users.count || 0 }, configTokens: (config.admin_tokens || []).join(', '), loading: false }));
@@ -787,7 +790,7 @@ function App() {
     setAdmin(s => ({ ...s, loading: true, error: '' }));
 
     try {
-      const saved = await API.saveAdminConfig(admin.session, tokens);
+      const saved = await API.saveAdminConfig(admin.session, { admin_tokens: tokens });
       await loadAdminData();
       setAdmin(s => ({
         ...s,
