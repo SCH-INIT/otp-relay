@@ -52,7 +52,6 @@ const API = {
   adminLog(session) { return this.json('/admin/log?limit=500', { headers: session ? { 'X-Admin-Session': session } : {} }); },
   adminConfig(session) { return this.json('/admin/config', { headers: session ? { 'X-Admin-Session': session } : {} }); },
   saveAdminConfig(session, payload) {
-    const body = Array.isArray(payload) ? { admin_tokens: payload } : { admin_tokens: payload?.admin_tokens || [] };
     return this.json('/admin/config', { method: 'POST', headers: { 'X-Admin-Session': session }, body: JSON.stringify(body) });
   },
   notifyAdminTask(payload) { return this.json('/api/onboard/notify', { method: 'POST', body: JSON.stringify(payload) }); },
@@ -790,7 +789,7 @@ function App() {
     setAdmin(s => ({ ...s, loading: true, error: '' }));
 
     try {
-      const saved = await API.saveAdminConfig(admin.session, { admin_tokens: tokens });
+      const saved = await API.saveAdminConfig(admin.session, tokens);
       await loadAdminData();
       setAdmin(s => ({
         ...s,
