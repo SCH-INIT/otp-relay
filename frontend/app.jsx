@@ -16,7 +16,25 @@ const API = {
     });
     let data = null;
     try { data = await res.json(); } catch { data = null; }
-    if (!res.ok) throw new Error((data && (data.detail || data.error)) || `Request failed: ${res.status}`);
+    if (!res.ok) {
+      const raw = data && (data.detail || data.error || data.message);
+      let message = `Request failed: ${res.status}`;
+      if (typeof raw === 'string') {
+        message = raw;
+      } else if (Array.isArray(raw)) {
+        message = raw.map(item => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object') {
+            const where = Array.isArray(item.loc) ? item.loc.join('.') : '';
+            return [where, item.msg || item.message || JSON.stringify(item)].filter(Boolean).join(': ');
+          }
+          return String(item);
+        }).join('; ');
+      } else if (raw && typeof raw === 'object') {
+        message = raw.msg || raw.message || JSON.stringify(raw);
+      }
+      throw new Error(message);
+    }
     return data;
   },
   claimOtp(token) { return this.json('/claim-otp', { method: 'POST', body: JSON.stringify({ token }) }); },
@@ -1800,10 +1818,10 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
         {showAdminTokenConfig && (
           <div onClick={() => setShowAdminTokenConfig(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 1000 }}>
             <div className="card side-card" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, margin: 0 }}>
-              <div className="side-card-title">Admin settings</div>
-              <div className="field"><label>Allowed admin tokens</label><input value={admin.configTokens} onChange={e => setAdmin(s => ({ ...s, configTokens: e.target.value, error: '' }))} /></div>
-              <div className="small" style={{ marginTop: 10 }}>Seeded for Jathin, Amer, and Christian, but editable from the portal.</div>
-              {admin.error && <div className="error-box" style={{ marginTop: 10 }}>{admin.error}</div>}
+              <div className="side-card-title">Allowed admin tokens</div>
+              <div className="field"><input aria-label="Allowed admin tokens" value={admin.configTokens} onChange={e => setAdmin(s => ({ ...s, configTokens: e.target.value, error: '' }))} /></div>
+              <div className="small" style={{ marginTop: 10 }}>Comma-separated admin tokens. Defaults are JPR, AMD, and SCH; add or remove tokens here and save.</div>
+              {admin.error && <div className="error-box" style={{ marginTop: 10 }}>{String(admin.error)}</div>}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 12 }}>
                 <button className="btn btn-secondary" style={{ width: 'auto', whiteSpace: 'nowrap' }} disabled={admin.loading} onClick={() => setShowAdminTokenConfig(false)}>Close</button>
                 <button
