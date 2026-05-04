@@ -1360,15 +1360,20 @@ function GuideOverlay({ step, guide, page, setPage, onClose, onPopOut }) {
           )}
         </div>
 
-<div className="guide-modal-footer">
-  <button className="btn btn-secondary" onClick={() => setPage(page - 1)} disabled={page <= 0}>← Back</button>
-  <div className="guide-count">{page + 1} / {pages.length}</div>
-  {page < lastPage ? (
-    <button className="btn btn-primary" onClick={() => setPage(page + 1)}>Next →</button>
-  ) : (
-    <span style={{ width: 92 }} />
-  )}
-</div>
+
+        <div className="guide-modal-footer">
+          <button className="btn btn-secondary" onClick={() => setPage(page - 1)} disabled={page <= 0}>← Back</button>
+          <div className="guide-count">{page + 1} / {pages.length}</div>
+          {page < lastPage ? (
+            <button className="btn btn-primary" onClick={() => setPage(page + 1)}>Next →</button>
+          ) : (
+            <span style={{ width: 92 }} />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function Guide({ step }) {
   return (
