@@ -1210,14 +1210,6 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
           <div className="small" style={{ marginTop: 10 }}>VPN, PAM, and SFTP access all expire after 90 days.</div>
         </div>
 
-        <div className="card side-card">
-          <div className="side-card-title">Quick links</div>
-          <div className="quick-links">
-            <a className="quick-link" href="https://direct.rta.ae" target="_blank" rel="noopener noreferrer"><span>RTA Automation Portal</span><small>Main portal</small></a>
-            <a className="quick-link" href="https://srvterminal.init-db.lan" target="_blank" rel="noopener noreferrer"><span>Terminal Server</span><small>Outside UAE</small></a>
-            <a className="quick-link" href="https://ettisal.rta.ae/vendors" target="_blank" rel="noopener noreferrer"><span>Ivanti VPN</span><small>Install/test</small></a>
-          </div>
-        </div>
 
         <div className="card side-card">
           <div className="side-card-title">Good to know</div>
