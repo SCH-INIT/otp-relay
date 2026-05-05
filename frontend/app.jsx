@@ -844,22 +844,27 @@ function App() {
     setLogin({ tokenChars: ['', '', ''], error: '' });
   }
 
+  const otpSidebarTitleStyle = { fontSize: 14, fontWeight: 800, letterSpacing: '.11em' };
+  const otpSidebarTextStyle = { fontSize: 15, lineHeight: 1.75 };
+  const otpQuickLinkLabelStyle = { fontSize: 14, fontWeight: 800 };
+  const otpQuickLinkHintStyle = { fontSize: 12, fontWeight: 700 };
+
   const sharedSidebar = (
     <div className="side-stack">
       <div className="card side-card">
-        <div className="side-card-title">How this works</div>
+        <div className="side-card-title" style={otpSidebarTitleStyle}>How this works</div>
         <div className="notes-list">
-          <div className="small">Claim the OTP slot first, then trigger the RTA OTP only when the portal tells you to.</div>
-          <div className="small">The wizard is shared and server-backed, so credentials and reminder dates follow the user token across devices.</div>
-          <div className="small">Admins can monitor onboarding progress and complete the admin-owned steps.</div>
+          <div className="small" style={otpSidebarTextStyle}>Claim the OTP slot first, then trigger the RTA OTP only when the portal tells you to.</div>
+          <div className="small" style={otpSidebarTextStyle}>The wizard is shared and server-backed, so credentials and reminder dates follow the user token across devices.</div>
+          <div className="small" style={otpSidebarTextStyle}>Admins can monitor onboarding progress and complete the admin-owned steps.</div>
         </div>
       </div>
       <div className="card side-card">
-        <div className="side-card-title">Quick links</div>
+        <div className="side-card-title" style={otpSidebarTitleStyle}>Quick links</div>
         <div className="quick-links">
-          <a className="quick-link" href="https://direct.rta.ae" target="_blank" rel="noopener noreferrer"><span>RTA Automation Portal</span><small>Portal</small></a>
-          <a className="quick-link" href="https://srvterminal.init-db.lan" target="_blank" rel="noopener noreferrer"><span>Terminal Server</span><small>UAE-only workaround</small></a>
-          <a className="quick-link" href="https://ettisal.rta.ae/vendors" target="_blank" rel="noopener noreferrer"><span>Ivanti VPN</span><small>ettisal.rta.ae</small></a>
+          <a className="quick-link" href="https://direct.rta.ae" target="_blank" rel="noopener noreferrer"><span style={otpQuickLinkLabelStyle}>RTA Automation Portal</span><small style={otpQuickLinkHintStyle}>Portal</small></a>
+          <a className="quick-link" href="https://srvterminal.init-db.lan" target="_blank" rel="noopener noreferrer"><span style={otpQuickLinkLabelStyle}>Terminal Server</span><small style={otpQuickLinkHintStyle}>UAE-only workaround</small></a>
+          <a className="quick-link" href="https://ettisal.rta.ae/vendors" target="_blank" rel="noopener noreferrer"><span style={otpQuickLinkLabelStyle}>Ivanti VPN</span><small style={otpQuickLinkHintStyle}>ettisal.rta.ae</small></a>
         </div>
       </div>
     </div>
