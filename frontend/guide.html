@@ -172,8 +172,8 @@
     .btn:disabled { opacity: .5; cursor: not-allowed; }
     .tabs {
       display: flex;
-      gap: 8px;
-      padding: 14px 24px;
+      gap: 12px;
+      padding: 16px 24px;
       border-bottom: 1px solid var(--border);
       flex-wrap: wrap;
       align-items: center;
@@ -183,13 +183,18 @@
       background: var(--surface-soft);
       color: #334155;
       border-radius: 999px;
-      padding: 9px 13px;
+      padding: 12px 18px;
+      min-height: 42px;
       font-family: var(--mono);
-      font-size: 11px;
-      font-weight: 800;
+      font-size: 13px;
+      font-weight: 900;
       text-transform: uppercase;
-      letter-spacing: .05em;
+      letter-spacing: .055em;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.1;
     }
     .tab.active {
       background: var(--primary-dark);
