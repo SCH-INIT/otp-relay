@@ -755,7 +755,7 @@ function App() {
   }
 
   async function loadAdminData(session = admin.session) {
-    if (!session) return;
+    if (!session) return false;
     setAdmin(s => ({ ...s, loading: true, error: '' }));
     try {
       const [wizard, queue, users, log, config] = await Promise.all([
@@ -767,8 +767,10 @@ function App() {
       ]);
       const mergedUsers = mergeAdminUsers(wizard.users || [], users.users || []);
       setAdmin(s => ({ ...s, data: { users: mergedUsers, queue: queue.queue || [], log: log.entries || [], logTotal: log.total || 0, userCount: users.count || 0 }, configTokens: (config.admin_tokens || []).join(', '), loading: false }));
+      return true;
     } catch (e) {
       setAdmin(s => ({ ...s, error: e.message, loading: false }));
+      return false;
     }
   }
 
@@ -845,19 +847,19 @@ function App() {
   const sharedSidebar = (
     <div className="side-stack">
       <div className="card side-card">
-        <div className="side-card-title" style={{ fontSize: 14 }}>How this works</div>
+        <div className="side-card-title">How this works</div>
         <div className="notes-list">
-          <div className="small" style={{ fontSize: 14, lineHeight: 1.65 }}>Claim the OTP slot first, then trigger the RTA OTP only when the portal tells you to.</div>
-          <div className="small" style={{ fontSize: 14, lineHeight: 1.65 }}>The wizard is shared and server-backed, so credentials and reminder dates follow the user token across devices.</div>
-          <div className="small" style={{ fontSize: 14, lineHeight: 1.65 }}>Admins can monitor onboarding progress and complete the admin-owned steps.</div>
+          <div className="small">Claim the OTP slot first, then trigger the RTA OTP only when the portal tells you to.</div>
+          <div className="small">The wizard is shared and server-backed, so credentials and reminder dates follow the user token across devices.</div>
+          <div className="small">Admins can monitor onboarding progress and complete the admin-owned steps.</div>
         </div>
       </div>
       <div className="card side-card">
-        <div className="side-card-title" style={{ fontSize: 14 }}>Quick links</div>
+        <div className="side-card-title">Quick links</div>
         <div className="quick-links">
-          <a className="quick-link" href="https://direct.rta.ae" target="_blank" rel="noopener noreferrer"><span style={{ fontWeight: 800, fontSize: 14 }}>RTA Automation Portal</span><small style={{ fontWeight: 700, fontSize: 12 }}>Portal</small></a>
-          <a className="quick-link" href="https://srvterminal.init-db.lan" target="_blank" rel="noopener noreferrer"><span style={{ fontWeight: 800, fontSize: 14 }}>Terminal Server</span><small style={{ fontWeight: 700, fontSize: 12 }}>UAE-only workaround</small></a>
-          <a className="quick-link" href="https://ettisal.rta.ae/vendors" target="_blank" rel="noopener noreferrer"><span style={{ fontWeight: 800, fontSize: 14 }}>Ivanti VPN</span><small style={{ fontWeight: 700, fontSize: 12 }}>ettisal.rta.ae</small></a>
+          <a className="quick-link" href="https://direct.rta.ae" target="_blank" rel="noopener noreferrer"><span>RTA Automation Portal</span><small>Portal</small></a>
+          <a className="quick-link" href="https://srvterminal.init-db.lan" target="_blank" rel="noopener noreferrer"><span>Terminal Server</span><small>UAE-only workaround</small></a>
+          <a className="quick-link" href="https://ettisal.rta.ae/vendors" target="_blank" rel="noopener noreferrer"><span>Ivanti VPN</span><small>ettisal.rta.ae</small></a>
         </div>
       </div>
     </div>
@@ -1520,6 +1522,7 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
   const [wizardEnv, setWizardEnv] = useState('all');
   const [wizardProgress, setWizardProgress] = useState('all');
   const [showAdminTokenConfig, setShowAdminTokenConfig] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState('');
 
   useEffect(() => {
     if (admin.session && !admin.data) loadAdminData();
@@ -1579,6 +1582,15 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
     return true;
   });
 
+  async function refreshAdminData() {
+    setRefreshStatus('Refreshing...');
+    const ok = await loadAdminData();
+    setRefreshStatus(ok ? 'Updated just now' : 'Refresh failed');
+    setTimeout(() => {
+      setRefreshStatus(current => (current === 'Updated just now' || current === 'Refresh failed' ? '' : current));
+    }, 2200);
+  }
+
   function renderCompletedSteps(user) {
     const done = completedStepsList(user);
     if (done.length === 0) return <div className="small">No completed steps yet</div>;
@@ -1614,7 +1626,8 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
                 <button className="btn" style={{ width: 'auto', whiteSpace: 'nowrap', background: adminTab === 'otp-log' ? RS.primary800 : RS.neutralWhite, color: adminTab === 'otp-log' ? RS.neutralWhite : RS.neutral900, border: adminTab === 'otp-log' ? 'none' : `1px solid ${RS.neutral300}` }} onClick={() => setAdminTab('otp-log')}>OTP Log</button>
               </div>
               {adminTab === 'wizard' && <button className="btn btn-secondary" style={{ width: 'auto', whiteSpace: 'nowrap' }} onClick={() => exportWizardProgressPdf(users)}>Export PDF</button>}
-              <button className="btn btn-secondary" style={{ width: 'auto', whiteSpace: 'nowrap' }} onClick={() => loadAdminData()}>Refresh</button>
+              <button className="btn btn-secondary" style={{ width: 'auto', whiteSpace: 'nowrap' }} disabled={admin.loading} onClick={refreshAdminData}>{admin.loading && refreshStatus === 'Refreshing...' ? 'Refreshing...' : 'Refresh'}</button>
+              {refreshStatus && <span className={refreshStatus === 'Refresh failed' ? 'error-box' : 'success-box'} style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{refreshStatus}</span>}
               <button className="btn btn-secondary" style={{ width: 46, minWidth: 46, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, lineHeight: 1 }} aria-label="Admin token settings" title="Admin token settings" onClick={() => setShowAdminTokenConfig(true)}>⚙</button>
             </div>
           </div>
