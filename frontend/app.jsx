@@ -1088,8 +1088,58 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
   const [guideOverlay, setGuideOverlay] = useState({ stepId: null, page: 0 });
   const [wizardGuide, setWizardGuide] = useState({ steps: {}, generatedAt: null });
   const [guideLoadState, setGuideLoadState] = useState({ loading: true, error: '' });
+  const [credentialDraft, setCredentialDraft] = useState({ display_name: '', iits_username: '', adm_username: '' });
+  const credentialSaveTimers = React.useRef({});
   const guideStep = STEPS.find(step => step.id === guideOverlay.stepId);
   const guideData = guideStep ? wizardGuide?.steps?.[guideStep.id] : null;
+
+  useEffect(() => {
+    setCredentialDraft({
+      display_name: user.display_name || '',
+      iits_username: user.iits_username || '',
+      adm_username: user.adm_username || '',
+    });
+  }, [user.token, user.display_name, user.iits_username, user.adm_username]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(credentialSaveTimers.current).forEach(timer => clearTimeout(timer));
+    };
+  }, []);
+
+  function commitCredentialField(field, value) {
+    const nextValue = value || '';
+    if ((user[field] || '') === nextValue) return;
+    saveWizard({ [field]: nextValue });
+  }
+
+  function scheduleCredentialSave(field, value) {
+    if (credentialSaveTimers.current[field]) clearTimeout(credentialSaveTimers.current[field]);
+    credentialSaveTimers.current[field] = setTimeout(() => {
+      commitCredentialField(field, value);
+      credentialSaveTimers.current[field] = null;
+    }, 700);
+  }
+
+  function updateCredentialDraft(field, value) {
+    setCredentialDraft(current => ({ ...current, [field]: value }));
+    scheduleCredentialSave(field, value);
+  }
+
+  function flushCredentialSave(field) {
+    if (credentialSaveTimers.current[field]) {
+      clearTimeout(credentialSaveTimers.current[field]);
+      credentialSaveTimers.current[field] = null;
+    }
+    commitCredentialField(field, credentialDraft[field]);
+  }
+
+  function saveCredentialOnEnter(e, field) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    flushCredentialSave(field);
+    e.currentTarget.blur();
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -1207,9 +1257,9 @@ function WizardView({ user, saveWizard, wizardStatus, openStep, setOpenStep, don
         <div className="card side-card">
           <div className="side-card-title">Your credentials</div>
           <div className="form-grid">
-            <div className="field"><label>Display name</label><input value={user.display_name || ''} onChange={e => saveWizard({ display_name: e.target.value })} placeholder="e.g. Sara" /></div>
-            <div className="field"><label>IITS username</label><input value={user.iits_username || ''} onChange={e => saveWizard({ iits_username: e.target.value })} placeholder="IITS_…" /></div>
-            <div className="field"><label>ADM username</label><input value={user.adm_username || ''} onChange={e => saveWizard({ adm_username: e.target.value })} placeholder="ADM_…" /></div>
+            <div className="field"><label>Display name</label><input value={credentialDraft.display_name || ''} onChange={e => updateCredentialDraft('display_name', e.target.value)} onBlur={() => flushCredentialSave('display_name')} onKeyDown={e => saveCredentialOnEnter(e, 'display_name')} placeholder="e.g. Sara" /></div>
+            <div className="field"><label>IITS username</label><input value={credentialDraft.iits_username || ''} onChange={e => updateCredentialDraft('iits_username', e.target.value)} onBlur={() => flushCredentialSave('iits_username')} onKeyDown={e => saveCredentialOnEnter(e, 'iits_username')} placeholder="IITS_…" /></div>
+            <div className="field"><label>ADM username</label><input value={credentialDraft.adm_username || ''} onChange={e => updateCredentialDraft('adm_username', e.target.value)} onBlur={() => flushCredentialSave('adm_username')} onKeyDown={e => saveCredentialOnEnter(e, 'adm_username')} placeholder="ADM_…" /></div>
           </div>
         </div>
 
