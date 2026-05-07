@@ -249,17 +249,7 @@ fi
 
 section "6/8  Environment configuration"
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
-  ENV_TEMPLATE=""
-  if [[ -f "${INSTALL_DIR}/.env.template" ]]; then
-    ENV_TEMPLATE="${INSTALL_DIR}/.env.template"
-  elif [[ -f "${INSTALL_DIR}/_env.template" ]]; then
-    ENV_TEMPLATE="${INSTALL_DIR}/_env.template"
-  else
-    fail "No environment template found: expected .env.template or _env.template"
-    exit 1
-  fi
-
-  cp "${ENV_TEMPLATE}" "${INSTALL_DIR}/.env"
+  cp "${INSTALL_DIR}/.env.template" "${INSTALL_DIR}/.env"
   warn ".env created from template — leave it as a template for now if you are not ready to start services."
   warn "  Later edit: sudo nano ${INSTALL_DIR}/.env"
   warn "  Required before first app start: SERVER_HOSTNAME, SERVER_IP, SMS_SECRET_TOKEN"
@@ -322,7 +312,7 @@ fi
 
 SERVER_HOSTNAME="${SERVER_HOSTNAME}" SERVER_IP="${SERVER_IP}" \
   envsubst '${SERVER_HOSTNAME} ${SERVER_IP}' \
-  < "${INSTALL_DIR}/otp-relay_conf.template" \
+  < "${INSTALL_DIR}/nginx/otp-relay.conf.template" \
   > /etc/nginx/sites-available/otp-relay
 
 ln -sf /etc/nginx/sites-available/otp-relay /etc/nginx/sites-enabled/otp-relay
@@ -349,13 +339,13 @@ info "Stopping any running otp-relay / otp-monitor instances..."
 systemctl stop otp-relay  2>/dev/null || true
 systemctl stop otp-monitor 2>/dev/null || true
 
-cp "${INSTALL_DIR}/otp-relay.service"   /etc/systemd/system/otp-relay.service
-cp "${INSTALL_DIR}/otp-monitor.service" /etc/systemd/system/otp-monitor.service
+cp "${INSTALL_DIR}/systemd/otp-relay.service"   /etc/systemd/system/otp-relay.service
+cp "${INSTALL_DIR}/systemd/otp-monitor.service" /etc/systemd/system/otp-monitor.service
 systemctl daemon-reload
 systemctl enable otp-relay otp-monitor
 
 # Verify systemd picked up the correct ExecStart from the repo unit file
-EXPECTED_EXEC="$(grep '^ExecStart=' "${INSTALL_DIR}/otp-relay.service")"
+EXPECTED_EXEC="$(grep '^ExecStart=' "${INSTALL_DIR}/systemd/otp-relay.service")"
 LOADED_EXEC="$(systemctl cat otp-relay | grep '^ExecStart=')"
 if [[ "${EXPECTED_EXEC}" != "${LOADED_EXEC}" ]]; then
   fail "systemd unit mismatch after daemon-reload — expected:"
