@@ -249,7 +249,7 @@ fi
 
 section "6/8  Environment configuration"
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
-  cp "${INSTALL_DIR}/.env.template" "${INSTALL_DIR}/.env"
+  cp "${INSTALL_DIR}/_env.template" "${INSTALL_DIR}/.env"
   warn ".env created from template — leave it as a template for now if you are not ready to start services."
   warn "  Later edit: sudo nano ${INSTALL_DIR}/.env"
   warn "  Required before first app start: SERVER_HOSTNAME, SERVER_IP, SMS_SECRET_TOKEN"
