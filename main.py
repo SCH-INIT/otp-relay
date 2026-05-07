@@ -92,7 +92,11 @@ AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
 ADMIN_TTL_SECONDS = 8 * 60 * 60
+ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC = int(os.getenv("ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC", "300"))
+ADMIN_LOGIN_RATE_LIMIT_ATTEMPTS = int(os.getenv("ADMIN_LOGIN_RATE_LIMIT_ATTEMPTS", "5"))
+ADMIN_LOGIN_LOCKOUT_SEC = int(os.getenv("ADMIN_LOGIN_LOCKOUT_SEC", "900"))
 ADMIN_SESSIONS: Dict[str, float] = {}
+ADMIN_LOGIN_ATTEMPTS: Dict[str, Dict[str, float]] = {}
 PORTAL_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
@@ -160,6 +164,46 @@ def _require_admin(session: Optional[str]) -> None:
     if not ts:
         raise HTTPException(status_code=401, detail="Invalid admin session")
     ADMIN_SESSIONS[session] = datetime.now(timezone.utc).timestamp()
+
+
+def _admin_login_key(request: Request) -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if forwarded_for:
+        return forwarded_for
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _check_admin_login_rate_limit(key: str) -> None:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    entry = ADMIN_LOGIN_ATTEMPTS.get(key)
+    if not entry:
+        return
+    if entry.get("locked_until", 0) > now_ts:
+        retry_after = int(entry["locked_until"] - now_ts)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts. Try again in {retry_after} seconds.",
+        )
+    if now_ts - entry.get("first_failed_at", now_ts) > ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC:
+        ADMIN_LOGIN_ATTEMPTS.pop(key, None)
+
+
+def _record_admin_login_failure(key: str) -> None:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    entry = ADMIN_LOGIN_ATTEMPTS.get(key)
+    if not entry or now_ts - entry.get("first_failed_at", now_ts) > ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC:
+        entry = {"count": 0, "first_failed_at": now_ts, "locked_until": 0}
+    entry["count"] = entry.get("count", 0) + 1
+    if entry["count"] >= ADMIN_LOGIN_RATE_LIMIT_ATTEMPTS:
+        entry["locked_until"] = now_ts + ADMIN_LOGIN_LOCKOUT_SEC
+        audit("admin_auth_rate_limited", detail=f"Admin login locked for {key}", status="warn")
+    ADMIN_LOGIN_ATTEMPTS[key] = entry
+
+
+def _record_admin_login_success(key: str) -> None:
+    ADMIN_LOGIN_ATTEMPTS.pop(key, None)
 
 
 def _purge_portal_sessions() -> None:
@@ -648,14 +692,18 @@ async def admin_auth_setup(payload: CredentialPayload):
 
 
 @app.post("/admin/auth/login")
-async def admin_auth_login(payload: CredentialPayload):
+async def admin_auth_login(payload: CredentialPayload, request: Request):
+    login_key = _admin_login_key(request)
+    _check_admin_login_rate_limit(login_key)
     db = _auth_db()
     stored = db.get("password_hash")
     if not stored:
         raise HTTPException(status_code=400, detail="Admin credential not configured")
     if not bcrypt.checkpw((payload.credential or "").encode("utf-8"), stored.encode("utf-8")):
+        _record_admin_login_failure(login_key)
         audit("admin_auth_failed", detail="Incorrect admin credential", status="warn")
         raise HTTPException(status_code=401, detail="Incorrect credential")
+    _record_admin_login_success(login_key)
     session = secrets.token_urlsafe(24)
     ADMIN_SESSIONS[session] = datetime.now(timezone.utc).timestamp()
     audit("admin_auth_login", detail="Admin session opened")
