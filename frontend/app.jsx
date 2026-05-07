@@ -823,7 +823,7 @@ function App() {
   }
 
 
-  async async function submitLogin() {
+  async function submitLogin() {
     const token = normalizeToken(login.tokenChars.join(''));
     if (!token || token.length < 2) {
       setLogin(s => ({ ...s, error: 'Enter a valid 2–3 character token.' }));
