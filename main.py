@@ -1,4 +1,4 @@
-# OTP Relay Server — main.py
+# OTP Relay Server -- main.py
 # Stack: FastAPI + Python 3.12 + Exchange SMTP (internal only)
 # No external APIs. Runs entirely on your company LAN.
 #
@@ -38,12 +38,12 @@ app = FastAPI(title="OTP Relay")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # safe — server is LAN-only
+    allow_origins=["*"],   # safe -- server is LAN-only
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# -- Config --------------------------------------------------------------------
 SMS_SECRET_TOKEN = os.getenv("SMS_SECRET_TOKEN", "changeme")
 
 SMTP_HOST        = os.getenv("SMTP_HOST", "mail.company.local")
@@ -68,12 +68,12 @@ CONCURRENT_RISK_SEC = int(os.getenv("CONCURRENT_RISK_SEC", "30"))
 USERS_EXCEL_PATH = str(_resolve_runtime_path(os.getenv("USERS_EXCEL_PATH", "data/users.xlsx")))
 AUDIT_LOG_PATH   = str(_resolve_runtime_path(os.getenv("AUDIT_LOG_PATH", "data/audit.log")))
 
-# ── State ─────────────────────────────────────────────────────────────────────
+# -- State ---------------------------------------------------------------------
 # Queue: max depth 1 enforced at claim time. Others wait and poll.
 users: dict        = {}
 claim_queue: deque = deque()
 
-# Delivered OTPs held in memory only — never written to disk or logs.
+# Delivered OTPs held in memory only -- never written to disk or logs.
 # Structure: { token: { "otp": str, "arrived_at": datetime } }
 pending_otps: dict = {}
 
@@ -85,7 +85,7 @@ logging.basicConfig(
 logger = logging.getLogger("otp-relay")
 
 
-# ── Server-backed wizard/admin state ─────────────────────────────────────────
+# -- Server-backed wizard/admin state -----------------------------------------
 DATA_DIR = _resolve_runtime_path(os.environ.get("OTP_RELAY_DATA_DIR", "data"))
 WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
@@ -94,11 +94,14 @@ DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
 ADMIN_TTL_SECONDS = 8 * 60 * 60
 ADMIN_SESSIONS: Dict[str, float] = {}
 
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+
 def _ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _read_json(path: Path, default: Any) -> Any:
     if not path.exists():
@@ -109,35 +112,44 @@ def _read_json(path: Path, default: Any) -> Any:
         logger.warning(f"Could not read {path}: {e}")
         return default
 
+
 def _write_json(path: Path, payload: Any) -> None:
     _ensure_data_dir()
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
+
 def _wizard_db() -> Dict[str, dict]:
     return _read_json(WIZARD_FILE, {})
+
 
 def _save_wizard_db(db: Dict[str, dict]) -> None:
     _write_json(WIZARD_FILE, db)
 
+
 def _auth_db() -> Dict[str, Any]:
     return _read_json(AUTH_FILE, {})
 
+
 def _save_auth_db(db: Dict[str, Any]) -> None:
     _write_json(AUTH_FILE, db)
+
 
 def _config_db() -> Dict[str, Any]:
     env_tokens = os.environ.get("ADMIN_TOKENS", "")
     env_default = [t.strip().upper() for t in env_tokens.split(",") if t.strip()] or DEFAULT_ADMIN_TOKENS
     return _read_json(CONFIG_FILE, {"admin_tokens": env_default})
 
+
 def _save_config_db(db: Dict[str, Any]) -> None:
     _write_json(CONFIG_FILE, db)
+
 
 def _purge_admin_sessions() -> None:
     now_ts = datetime.now(timezone.utc).timestamp()
     stale = [s for s, ts in ADMIN_SESSIONS.items() if now_ts - ts > ADMIN_TTL_SECONDS]
     for s in stale:
         ADMIN_SESSIONS.pop(s, None)
+
 
 def _require_admin(session: Optional[str]) -> None:
     _purge_admin_sessions()
@@ -147,6 +159,7 @@ def _require_admin(session: Optional[str]) -> None:
     if not ts:
         raise HTTPException(status_code=401, detail="Invalid admin session")
     ADMIN_SESSIONS[session] = datetime.now(timezone.utc).timestamp()
+
 
 class WizardRecord(BaseModel):
     token: str
@@ -159,21 +172,27 @@ class WizardRecord(BaseModel):
     adm_pw_date: Optional[str] = None
     vpn_date: Optional[str] = None
 
+
 class CredentialPayload(BaseModel):
     credential: str
     current: Optional[str] = None
+
 
 class ConfigPayload(BaseModel):
     admin_tokens: List[str]
 
 
-# ── User loading ──────────────────────────────────────────────────────────────
+class TokenLoginPayload(BaseModel):
+    token: str
+
+
+# -- User loading --------------------------------------------------------------
 def load_users_from_excel(path: str) -> int:
     """
     Reads users.xlsx. Expected columns (row 1 = headers):
-      token  — 2 or 3 character unique string, e.g. AH or AHM
-      name   — display name
-      email  — company email address
+      token  -- 2 or 3 character unique string, e.g. AH or AHM
+      name   -- display name
+      email  -- company email address
     Column names are case-insensitive.
     Skipped rows are written to the audit log so IT can fix them.
     """
@@ -198,7 +217,7 @@ def load_users_from_excel(path: str) -> int:
         email = str(row_dict.get("email", "") or "").strip()
 
         if len(token) == 0:
-            audit("import_skipped", detail=f"Row {row_num}: empty token — name={repr(name)} email={repr(email)}", status="warn")
+            audit("import_skipped", detail=f"Row {row_num}: empty token -- name={repr(name)} email={repr(email)}", status="warn")
             skipped += 1; continue
 
         if not (2 <= len(token) <= 3):
@@ -206,7 +225,7 @@ def load_users_from_excel(path: str) -> int:
             skipped += 1; continue
 
         if not re.match(r'^[A-Z0-9]+$', token):
-            audit("import_skipped", token=token, detail=f"Row {row_num}: token contains invalid characters ({repr(token)}) — only letters and digits allowed", status="warn")
+            audit("import_skipped", token=token, detail=f"Row {row_num}: token contains invalid characters ({repr(token)}) -- only letters and digits allowed", status="warn")
             skipped += 1; continue
 
         if not email:
@@ -218,7 +237,7 @@ def load_users_from_excel(path: str) -> int:
             skipped += 1; continue
 
         if token in seen_tokens:
-            audit("import_skipped", token=token, detail=f"Row {row_num}: duplicate token — already defined at row {seen_tokens[token]}", status="warn")
+            audit("import_skipped", token=token, detail=f"Row {row_num}: duplicate token -- already defined at row {seen_tokens[token]}", status="warn")
             skipped += 1; continue
 
         seen_tokens[token] = row_num
@@ -227,13 +246,13 @@ def load_users_from_excel(path: str) -> int:
 
     logger.info(f"Loaded {loaded} users from {path} ({skipped} rows skipped)")
     if skipped > 0:
-        audit("import_complete", detail=f"{loaded} users loaded, {skipped} rows skipped — check import_skipped entries above", status="warn")
+        audit("import_complete", detail=f"{loaded} users loaded, {skipped} rows skipped -- check import_skipped entries above", status="warn")
     else:
         audit("import_complete", detail=f"{loaded} users loaded, no issues")
     return loaded
 
 
-# ── Audit log ─────────────────────────────────────────────────────────────────
+# -- Audit log -----------------------------------------------------------------
 def audit(event: str, token: Optional[str] = None, detail: str = "", status: str = "info"):
     entry = {
         "ts":     datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -264,7 +283,7 @@ def read_audit_log(limit: int = 200) -> list:
         return []
 
 
-# ── Queue and OTP state helpers ───────────────────────────────────────────────
+# -- Queue and OTP state helpers ----------------------------------------------
 def purge_expired():
     """Evict the front-of-queue claim if it has exceeded CLAIM_EXPIRY_SEC."""
     now = datetime.utcnow()
@@ -273,7 +292,7 @@ def purge_expired():
         if age > CLAIM_EXPIRY_SEC:
             expired = claim_queue.popleft()
             audit("claim_expired", expired["token"],
-                  f"No OTP arrived within {CLAIM_EXPIRY_SEC}s — evicted from slot 1", "warn")
+                  f"No OTP arrived within {CLAIM_EXPIRY_SEC}s -- evicted from slot 1", "warn")
         else:
             break
 
@@ -295,7 +314,7 @@ def extract_otp(text: str) -> str:
     return match.group() if match else "—"
 
 
-# ── Email (diagnostics only — not used for OTP delivery) ─────────────────────
+# -- Email (diagnostics only -- not used for OTP delivery) ---------------------
 def send_email(to_email: str, name: str, subject: str, html: str):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -317,7 +336,7 @@ def send_email(to_email: str, name: str, subject: str, html: str):
     server.quit()
 
 
-# ── Background task ───────────────────────────────────────────────────────────
+# -- Background task -----------------------------------------------------------
 async def background_purge():
     """Runs every 15 seconds to expire stale queue entries and OTP display windows."""
     while True:
@@ -326,7 +345,7 @@ async def background_purge():
         purge_stale_otps()
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# -- Endpoints -----------------------------------------------------------------
 
 @app.on_event("startup")
 async def startup():
@@ -335,8 +354,17 @@ async def startup():
         audit("server_start", detail=f"{count} users loaded")
     else:
         logger.warning(f"users.xlsx not found at {USERS_EXCEL_PATH}")
-        audit("server_start", detail="No users.xlsx — POST /admin/reload-users after adding it", status="warn")
+        audit("server_start", detail="No users.xlsx -- POST /admin/reload-users after adding it", status="warn")
     asyncio.create_task(background_purge())
+
+
+@app.post("/portal/login")
+async def portal_login(payload: TokenLoginPayload):
+    token = payload.token.strip().upper()
+    if token not in users:
+        raise HTTPException(status_code=404, detail="Token not recognised. Check with IT.")
+    user = users[token]
+    return {"token": user["token"], "name": user["name"], "email": user["email"]}
 
 
 @app.post("/claim-otp")
@@ -351,7 +379,7 @@ async def claim_otp(request: Request):
     purge_expired()
     purge_stale_otps()
 
-    # Already queued — return current status without re-queuing
+    # Already queued -- return current status without re-queuing
     for i, claim in enumerate(claim_queue):
         if claim["token"] == token:
             age = (datetime.utcnow() - claim["claimed_at"]).total_seconds()
@@ -371,7 +399,7 @@ async def claim_otp(request: Request):
         return {"status": "otp_ready", "expires_in": remaining}
 
     # Queue depth = 1 enforced: only one active user at a time.
-    # Others are allowed to join the queue and wait — they are NOT allowed to
+    # Others are allowed to join the queue and wait -- they are NOT allowed to
     # trigger their OTP on the platform until they reach position 1.
     now = datetime.utcnow()
 
@@ -395,7 +423,7 @@ async def claim_otp(request: Request):
     queue_depth = len(claim_queue)
 
     # Worst-case wait: each person ahead of them gets the full CLAIM_EXPIRY_SEC.
-    # Position 1 = active now, position 2 = up to 1×90s, etc.
+    # Position 1 = active now, position 2 = up to 1x90s, etc.
     wait_estimate = max(0, (position - 1) * CLAIM_EXPIRY_SEC)
 
     audit("claim_queued", token, f"Queue position {position} of {queue_depth}")
@@ -441,7 +469,7 @@ async def claim_status(token: str):
                 "wait_estimate": wait_estimate,
             }
 
-    # Not in queue, not delivered — check log for recent terminal events
+    # Not in queue, not delivered -- check log for recent terminal events
     for e in read_audit_log(500):
         if e.get("token") == token:
             if e["event"] in ("otp_delivered", "otp_display_expired"):
@@ -463,7 +491,7 @@ async def cancel_claim(token: str):
 
     if token in pending_otps:
         del pending_otps[token]
-        audit("otp_discarded", token, "User requested retry — OTP discarded from memory")
+        audit("otp_discarded", token, "User requested retry -- OTP discarded from memory")
 
     # Remove from queue if present (e.g. user changed their mind while waiting)
     global claim_queue
@@ -493,13 +521,13 @@ async def sms_received(request: Request):
         await asyncio.sleep(4)
         purge_expired()
         if not claim_queue:
-            audit("sms_unmatched", detail="No claimant in queue — SMS discarded", status="warn")
+            audit("sms_unmatched", detail="No claimant in queue -- SMS discarded", status="warn")
             return {"status": "no_claimant"}
 
     recipient = claim_queue.popleft()
     otp       = extract_otp(sms_body)
 
-    # Store OTP in memory only — never logged, never written to disk.
+    # Store OTP in memory only -- never logged, never written to disk.
     pending_otps[recipient["token"]] = {
         "otp":        otp,
         "arrived_at": datetime.utcnow(),
@@ -507,19 +535,21 @@ async def sms_received(request: Request):
 
     # Audit record: token and timestamp only, OTP value deliberately omitted.
     audit("otp_delivered", recipient["token"],
-          f"OTP ready for display — queue unblocked")
+          f"OTP ready for display -- queue unblocked")
 
     return {"status": "delivered", "recipient": recipient["name"]}
 
 
 @app.get("/admin/log")
-async def get_log(limit: int = 200):
+async def get_log(limit: int = 200, x_admin_session: Optional[str] = Header(default=None)):
+    _require_admin(x_admin_session)
     entries = read_audit_log(limit)
     return {"entries": entries, "total": len(entries)}
 
 
 @app.get("/admin/queue")
-async def get_queue():
+async def get_queue(x_admin_session: Optional[str] = Header(default=None)):
+    _require_admin(x_admin_session)
     now = datetime.utcnow()
     return {"queue": [{
         "token":      c["token"],
@@ -532,14 +562,16 @@ async def get_queue():
 
 
 @app.get("/admin/users")
-async def list_users():
+async def list_users(x_admin_session: Optional[str] = Header(default=None)):
+    _require_admin(x_admin_session)
     return {"count": len(users),
             "users": [{"token": u["token"], "name": u["name"], "email": u["email"]}
                       for u in users.values()]}
 
 
 @app.post("/admin/reload-users")
-async def reload_users():
+async def reload_users(x_admin_session: Optional[str] = Header(default=None)):
+    _require_admin(x_admin_session)
     if not os.path.exists(USERS_EXCEL_PATH):
         raise HTTPException(status_code=404, detail=f"Not found: {USERS_EXCEL_PATH}")
     users.clear()
@@ -549,8 +581,9 @@ async def reload_users():
 
 
 @app.get("/admin/smtp-test")
-async def smtp_test():
+async def smtp_test(x_admin_session: Optional[str] = Header(default=None)):
     """Sends a test email to the relay account — use to verify Exchange connectivity."""
+    _require_admin(x_admin_session)
     html = """<div style="font-family:Arial,sans-serif;padding:24px">
       <p>OTP Relay SMTP test — if you can read this, Exchange is working. 🎉</p>
     </div>"""
@@ -561,9 +594,7 @@ async def smtp_test():
         return {"status": "error", "error": str(e)}
 
 
-
-
-# ── Wizard/admin server-backed endpoints ─────────────────────────────────────
+# -- Wizard/admin server-backed endpoints -------------------------------------
 @app.get("/admin/auth/status")
 async def admin_auth_status():
     return {"configured": bool(_auth_db().get("password_hash"))}
@@ -699,5 +730,5 @@ def serve_guide_html():
     return FileResponse(guide_path)
 
 
-# Serve frontend — must be last
+# Serve frontend -- must be last
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
