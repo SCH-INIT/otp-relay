@@ -91,6 +91,27 @@ WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
+DEFAULT_TOKEN_ENV_ACCESS: Dict[str, Dict[str, str]] = {
+    "BMI": {"test_env": "", "prod_env": ""},
+    "CSG": {"test_env": "", "prod_env": ""},
+    "GOE": {"test_env": "", "prod_env": ""},
+    "HAD": {"test_env": "", "prod_env": ""},
+    "LNA": {"test_env": "", "prod_env": "Mobile Statistics"},
+    "JYN": {"test_env": "", "prod_env": ""},
+    "STN": {"test_env": "", "prod_env": ""},
+    "TTR": {"test_env": "", "prod_env": "Mobile Statistics"},
+    "YSH": {"test_env": "", "prod_env": ""},
+    "JNB": {"test_env": "", "prod_env": ""},
+    "KTV": {"test_env": "", "prod_env": ""},
+    "FAL": {"test_env": "", "prod_env": ""},
+    "PZ": {"test_env": "", "prod_env": "Mobile Statistics"},
+    "RBM": {"test_env": "", "prod_env": ""},
+    "GAL": {"test_env": "Mobile Guard", "prod_env": "Mobile Guard"},
+    "BHI": {"test_env": "", "prod_env": ""},
+    "MRZ": {"test_env": "Mobile Plan", "prod_env": "Mobile Plan"},
+    "TOB": {"test_env": "Mobile Plan", "prod_env": "Mobile Plan"},
+    "KG": {"test_env": "", "prod_env": ""},
+}
 ADMIN_TTL_SECONDS = 8 * 60 * 60
 ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC = int(os.getenv("ADMIN_LOGIN_RATE_LIMIT_WINDOW_SEC", "300"))
 ADMIN_LOGIN_RATE_LIMIT_ATTEMPTS = int(os.getenv("ADMIN_LOGIN_RATE_LIMIT_ATTEMPTS", "5"))
@@ -139,10 +160,27 @@ def _save_auth_db(db: Dict[str, Any]) -> None:
     _write_json(AUTH_FILE, db)
 
 
-def _config_db() -> Dict[str, Any]:
+def _default_config() -> Dict[str, Any]:
     env_tokens = os.environ.get("ADMIN_TOKENS", "")
     env_default = [t.strip().upper() for t in env_tokens.split(",") if t.strip()] or DEFAULT_ADMIN_TOKENS
-    return _read_json(CONFIG_FILE, {"admin_tokens": env_default})
+    return {
+        "admin_tokens": env_default,
+        "token_env_access": DEFAULT_TOKEN_ENV_ACCESS,
+    }
+
+
+def _config_db() -> Dict[str, Any]:
+    default = _default_config()
+    db = _read_json(CONFIG_FILE, default)
+    merged_env_access = {
+        **default["token_env_access"],
+        **(db.get("token_env_access") or {}),
+    }
+    return {
+        **default,
+        **db,
+        "token_env_access": merged_env_access,
+    }
 
 
 def _save_config_db(db: Dict[str, Any]) -> None:
@@ -247,6 +285,7 @@ class CredentialPayload(BaseModel):
 
 class ConfigPayload(BaseModel):
     admin_tokens: List[str]
+    token_env_access: Optional[Dict[str, Dict[str, str]]] = None
 
 
 class TokenLoginPayload(BaseModel):
@@ -727,9 +766,16 @@ async def admin_config(x_admin_session: Optional[str] = Header(default=None)):
 async def admin_config_save(payload: ConfigPayload, x_admin_session: Optional[str] = Header(default=None)):
     _require_admin(x_admin_session)
     tokens = [t.strip().upper() for t in payload.admin_tokens if t.strip()]
-    _save_config_db({"admin_tokens": tokens, "updated_at": _now_iso()})
+    current = _config_db()
+    token_env_access = payload.token_env_access if payload.token_env_access is not None else current.get("token_env_access", {})
+    saved = {
+        "admin_tokens": tokens,
+        "token_env_access": token_env_access,
+        "updated_at": _now_iso(),
+    }
+    _save_config_db(saved)
     audit("admin_config_saved", detail=f"Configured admin tokens: {', '.join(tokens) or 'none'}")
-    return {"status": "ok", "admin_tokens": tokens}
+    return saved
 
 
 @app.post("/wizard/progress")
@@ -786,9 +832,11 @@ async def wizard_progress_get(
 async def admin_wizard(x_admin_session: Optional[str] = Header(default=None)):
     _require_admin(x_admin_session)
     db = _wizard_db()
+    env_access = _config_db().get("token_env_access", {})
     merged = []
     for token, u in sorted(users.items()):
         rec = db.get(token, {})
+        token_env = env_access.get(token, {})
         merged.append({
             "token": token,
             "display_name": rec.get("display_name") or u.get("name", ""),
@@ -800,6 +848,8 @@ async def admin_wizard(x_admin_session: Optional[str] = Header(default=None)):
             "iits_pw_date": rec.get("iits_pw_date"),
             "adm_pw_date": rec.get("adm_pw_date"),
             "vpn_date": rec.get("vpn_date"),
+            "test_env": token_env.get("test_env", ""),
+            "prod_env": token_env.get("prod_env", ""),
             "updated_at": rec.get("updated_at"),
         })
     return {"users": merged}
