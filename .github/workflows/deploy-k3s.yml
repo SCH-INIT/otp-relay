@@ -1,0 +1,157 @@
+name: Deploy OTP Relay to K3s
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: "Deployment mode override"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - full
+          - app
+          - monitor
+          - manifests
+          - none
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: otp-relay-k3s-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy on K3s server
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine deployment mode
+        id: deploy_mode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REQUESTED_MODE="${{ github.event.inputs.deploy_mode || 'auto' }}"
+          if [ "$REQUESTED_MODE" != "auto" ]; then
+            echo "mode=$REQUESTED_MODE" >> "$GITHUB_OUTPUT"
+            echo "Deployment mode override: $REQUESTED_MODE"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "Manual run with auto mode defaults to full deployment."
+            exit 0
+          fi
+
+          BASE_SHA="${{ github.event.before }}"
+          HEAD_SHA="${{ github.sha }}"
+
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "No usable base SHA found; using full deployment."
+            exit 0
+          fi
+
+          CHANGED_FILES="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "Changed files:"
+          printf '%s\n' "$CHANGED_FILES"
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            echo "No changed files detected."
+            exit 0
+          fi
+
+          APP_CHANGED=0
+          MONITOR_CHANGED=0
+          MANIFESTS_CHANGED=0
+          DEPLOY_SYSTEM_CHANGED=0
+          DOCS_ONLY_CHANGED=0
+          UNKNOWN_CHANGED=0
+
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+
+            case "$file" in
+              install-otp-relay-k8s.sh|.github/workflows/deploy-k3s.yml)
+                DEPLOY_SYSTEM_CHANGED=1
+                ;;
+
+              main.py|requirements.txt|k8s/Dockerfile|frontend/*|frontend/**|scripts/build_help_docs.py|docs/help/*|docs/help/**)
+                APP_CHANGED=1
+                ;;
+
+              monitor.py|k8s/Dockerfile.monitor)
+                MONITOR_CHANGED=1
+                ;;
+
+              k8s/manifests/*|k8s/manifests/**)
+                MANIFESTS_CHANGED=1
+                ;;
+
+              README.md|LICENSE|.gitignore|docs/*|docs/**|k8s/docs/*|k8s/docs/**|scripts/generate_sample_users.py)
+                DOCS_ONLY_CHANGED=1
+                ;;
+
+              *)
+                UNKNOWN_CHANGED=1
+                ;;
+            esac
+          done <<< "$CHANGED_FILES"
+
+          if [ "$DEPLOY_SYSTEM_CHANGED" = "1" ] || [ "$UNKNOWN_CHANGED" = "1" ]; then
+            MODE=full
+          elif [ "$APP_CHANGED" = "1" ] && [ "$MONITOR_CHANGED" = "1" ]; then
+            MODE=full
+          elif [ "$APP_CHANGED" = "1" ]; then
+            MODE=app
+          elif [ "$MONITOR_CHANGED" = "1" ]; then
+            MODE=monitor
+          elif [ "$MANIFESTS_CHANGED" = "1" ]; then
+            MODE=manifests
+          else
+            MODE=none
+          fi
+
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "Selected deployment mode: $MODE"
+
+      - name: Skip deployment
+        if: steps.deploy_mode.outputs.mode == 'none'
+        run: echo "No deployment needed for the changed files."
+
+      - name: Deploy with checked-out installer
+        if: steps.deploy_mode.outputs.mode != 'none'
+        env:
+          DEPLOY_MODE: ${{ steps.deploy_mode.outputs.mode }}
+          REPO_URL: https://github.com/psi1703/k8s.git
+          REPO_REF: main
+          INSTALL_DIR: /opt/otp-relay-k8s
+          NAMESPACE: otp-relay
+          APP_IMAGE: otp-relay:latest
+          MONITOR_IMAGE: otp-monitor:latest
+          SERVICE_NODE_PORT: "30080"
+          INGRESS_ENABLED: "1"
+          NONINTERACTIVE: "1"
+          GIT_CLEAN: "1"
+          PHONE_IP: ${{ secrets.PHONE_IP }}
+          PHONE_INTERFACE: ${{ secrets.PHONE_INTERFACE }}
+          WHATSAPP_API_KEY: ${{ secrets.WHATSAPP_API_KEY }}
+          WHATSAPP_RECIPIENT: ${{ secrets.WHATSAPP_RECIPIENT }}
+          PORTAL_URL: ${{ secrets.PORTAL_URL }}
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/install-otp-relay-k8s.sh"
+          sudo -n -E /usr/bin/bash "$GITHUB_WORKSPACE/install-otp-relay-k8s.sh"

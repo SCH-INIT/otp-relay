@@ -1,8 +1,25 @@
+# Environment / secrets
 .env
 secret.env
+k8s/manifests/secret.env
+*.secret.env
+
+# Runtime data
 data/
+*.log
+
+# Python
 venv/
+.venv/
 __pycache__/
 *.pyc
-*.log
+.pytest_cache/
+
+# Build / image exports
 *.tar
+*.tar.gz
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

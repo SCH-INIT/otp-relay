@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+openpyxl
+python-dotenv
+bcrypt
+pydantic
+markdown
+pyyaml
+python-multipart
