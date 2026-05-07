@@ -11,6 +11,9 @@ data:
   USERS_EXCEL_PATH: "data/users.xlsx"
   AUDIT_LOG_PATH: "data/audit.log"
 
+  # ── Portal ──────────────────────────────────────────────────────────
+  ADMIN_TOKENS: "JPR,AMD,SCH"
+
   # ── Monitor ───────────────────────────────────────────────────────────────
   PHONE_IP: "172.31.10.161"
   PHONE_INTERFACE: "eth0"

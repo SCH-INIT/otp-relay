@@ -19,7 +19,7 @@ RUN python -m venv /build/venv && \
 FROM python:3.12-slim AS runtime
 
 # Create a non-root user — the container should not run as root
-RUN useradd --system --no-create-home --shell /usr/sbin/nologin otprelay
+RUN useradd --system --uid 999 --no-create-home --shell /usr/sbin/nologin otprelay
 
 WORKDIR /app
 
@@ -41,7 +41,7 @@ EXPOSE 8000
 # builder stage path (/build/venv/bin/python) which does not exist at runtime.
 # Calling via python -m uvicorn bypasses the script entirely.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD /app/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/queue')"
+    CMD /app/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"
 
 CMD ["/app/venv/bin/python", "-m", "uvicorn", "main:app", \
      "--host", "0.0.0.0", \

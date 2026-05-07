@@ -20,6 +20,14 @@ spec:
       labels:
         app: otp-relay
     spec:
+      # ── Node pinning ──────────────────────────────────────────────────
+      # The PVC uses ReadWriteOnce (local-path). Both the app and monitor
+      # pods must land on the same node to share the volume. Pick a worker
+      # node and label it:
+      #   kubectl label node <node> otp-relay/storage=true
+      nodeSelector:
+        otp-relay/storage: "true"
+
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
@@ -57,7 +65,7 @@ spec:
           # ── Probes ─────────────────────────────────────────────────────────
           readinessProbe:
             httpGet:
-              path: /admin/queue
+              path: /readyz
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 10
@@ -65,7 +73,7 @@ spec:
 
           livenessProbe:
             httpGet:
-              path: /admin/queue
+              path: /healthz
               port: 8000
             initialDelaySeconds: 20
             periodSeconds: 30

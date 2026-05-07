@@ -17,6 +17,19 @@ spec:
       labels:
         app: otp-monitor
     spec:
+      # ── hostNetwork — required for arping ─────────────────────────────
+      # The monitor uses ARP packets to detect the iPhone on the physical
+      # LAN. Without hostNetwork the pod sits on the cluster's virtual
+      # network and arping will never reach the iPhone's subnet.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      # ── Node pinning ──────────────────────────────────────────────────
+      # Must match the app pod's nodeSelector — both share a ReadWriteOnce
+      # PVC that is bound to a single node.
+      nodeSelector:
+        otp-relay/storage: "true"
+
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
