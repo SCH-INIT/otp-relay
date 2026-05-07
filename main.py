@@ -278,7 +278,7 @@ def load_users_from_excel(path: str) -> int:
 # -- Audit log -----------------------------------------------------------------
 def audit(event: str, token: Optional[str] = None, detail: str = "", status: str = "info"):
     entry = {
-        "ts":     datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ts":     datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "event":  event,
         "token":  token or "",
         "detail": detail,
@@ -309,7 +309,7 @@ def read_audit_log(limit: int = 200) -> list:
 # -- Queue and OTP state helpers ----------------------------------------------
 def purge_expired():
     """Evict the front-of-queue claim if it has exceeded CLAIM_EXPIRY_SEC."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     while claim_queue:
         age = (now - claim_queue[0]["claimed_at"]).total_seconds()
         if age > CLAIM_EXPIRY_SEC:
@@ -322,7 +322,7 @@ def purge_expired():
 
 def purge_stale_otps():
     """Remove delivered OTPs that have exceeded OTP_DISPLAY_SEC."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     stale = [
         tok for tok, v in pending_otps.items()
         if (now - v["arrived_at"]).total_seconds() > OTP_DISPLAY_SEC
@@ -410,7 +410,7 @@ async def claim_otp(request: Request):
     # Already queued -- return current status without re-queuing
     for i, claim in enumerate(claim_queue):
         if claim["token"] == token:
-            age = (datetime.utcnow() - claim["claimed_at"]).total_seconds()
+            age = (datetime.now(timezone.utc) - claim["claimed_at"]).total_seconds()
             remaining = max(0, int(CLAIM_EXPIRY_SEC - age))
             audit("claim_duplicate", token, f"Already at position {i+1}", "warn")
             return {
@@ -422,14 +422,14 @@ async def claim_otp(request: Request):
 
     # Already has a delivered OTP waiting on-screen
     if token in pending_otps:
-        age = (datetime.utcnow() - pending_otps[token]["arrived_at"]).total_seconds()
+        age = (datetime.now(timezone.utc) - pending_otps[token]["arrived_at"]).total_seconds()
         remaining = max(0, int(OTP_DISPLAY_SEC - age))
         return {"status": "otp_ready", "expires_in": remaining}
 
     # Queue depth = 1 enforced: only one active user at a time.
     # Others are allowed to join the queue and wait -- they are NOT allowed to
     # trigger their OTP on the platform until they reach position 1.
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Concurrent risk detection: warn if a second claim arrives close behind
     # the current front-of-queue (they could race to trigger OTPs).
@@ -474,7 +474,7 @@ async def claim_status(token: str):
 
     # OTP is ready and waiting on-screen
     if token in pending_otps:
-        age = (datetime.utcnow() - pending_otps[token]["arrived_at"]).total_seconds()
+        age = (datetime.now(timezone.utc) - pending_otps[token]["arrived_at"]).total_seconds()
         remaining = max(0, int(OTP_DISPLAY_SEC - age))
         return {
             "status":     "delivered",
@@ -485,7 +485,7 @@ async def claim_status(token: str):
     # Still in the claim queue
     for i, claim in enumerate(claim_queue):
         if claim["token"] == token:
-            age       = (datetime.utcnow() - claim["claimed_at"]).total_seconds()
+            age       = (datetime.now(timezone.utc) - claim["claimed_at"]).total_seconds()
             remaining = max(0, int(CLAIM_EXPIRY_SEC - age))
             # Worst-case wait for users behind position 1
             wait_estimate = max(0, i * CLAIM_EXPIRY_SEC)
@@ -558,7 +558,7 @@ async def sms_received(request: Request):
     # Store OTP in memory only -- never logged, never written to disk.
     pending_otps[recipient["token"]] = {
         "otp":        otp,
-        "arrived_at": datetime.utcnow(),
+        "arrived_at": datetime.now(timezone.utc),
     }
 
     # Audit record: token and timestamp only, OTP value deliberately omitted.
@@ -578,7 +578,7 @@ async def get_log(limit: int = 200, x_admin_session: Optional[str] = Header(defa
 @app.get("/admin/queue")
 async def get_queue(x_admin_session: Optional[str] = Header(default=None)):
     _require_admin(x_admin_session)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return {"queue": [{
         "token":      c["token"],
         "name":       c["name"],
