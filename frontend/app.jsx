@@ -41,6 +41,7 @@ const API = {
   claimOtp(token) { return this.json('/claim-otp', { method: 'POST', body: JSON.stringify({ token }) }); },
   claimStatus(token) { return this.json(`/claim-status/${encodeURIComponent(token)}`); },
   deleteClaim(token) { return this.json(`/claim-otp/${encodeURIComponent(token)}`, { method: 'DELETE' }); },
+  portalLogin(token) { return this.json('/portal/login', { method: 'POST', body: JSON.stringify({ token }) }); },
   saveWizard(payload) { return this.json('/wizard/progress', { method: 'POST', body: JSON.stringify(payload) }); },
   getWizard(token) { return this.json(`/wizard/progress/${encodeURIComponent(token)}`); },
   adminAuthStatus() { return this.json('/admin/auth/status'); },
@@ -559,15 +560,14 @@ function App() {
 
   useEffect(() => {
     API.adminAuthStatus().then(d => setAdmin(s => ({ ...s, configured: !!d.configured, mode: d.configured ? 'login' : 'setup' }))).catch(() => {});
-    API.adminUsers().then(d => {
-      const list = d.users || [];
-      setDirectoryUsers(list);
-      const remembered = normalizeToken(sessionStorage.getItem('portalUserToken') || '');
-      if (remembered) {
-        const found = list.find(u => normalizeToken(u.token) === remembered);
-        if (found) setCurrentUser({ token: normalizeToken(found.token), name: found.name || '', email: found.email || '' });
-      }
-    }).catch(() => {});
+    const remembered = normalizeToken(sessionStorage.getItem('portalUserToken') || '');
+    if (remembered) {
+      API.portalLogin(remembered).then(found => {
+        setCurrentUser({ token: normalizeToken(found.token), name: found.name || '', email: found.email || '' });
+      }).catch(() => {
+        sessionStorage.removeItem('portalUserToken');
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -818,20 +818,20 @@ function App() {
   }
 
 
-  function submitLogin() {
+  async function submitLogin() {
     const token = normalizeToken(login.tokenChars.join(''));
-    const found = directoryUsers.find(u => normalizeToken(u.token) === token);
     if (!token || token.length < 2) {
       setLogin(s => ({ ...s, error: 'Enter a valid 2–3 character token.' }));
       return;
     }
-    if (!found) {
-      setLogin(s => ({ ...s, error: 'Token not recognised. Check with IT.' }));
-      return;
+    try {
+      const found = await API.portalLogin(token);
+      sessionStorage.setItem('portalUserToken', token);
+      setCurrentUser({ token, name: found.name || '', email: found.email || '' });
+      setOtp(s => ({ ...s, token }));
+    } catch (e) {
+      setLogin(s => ({ ...s, error: e.message || 'Token not recognised. Check with IT.' }));
     }
-    sessionStorage.setItem('portalUserToken', token);
-    setCurrentUser({ token, name: found.name || '', email: found.email || '' });
-    setOtp(s => ({ ...s, token }));
   }
 
   function logoutUser() {
