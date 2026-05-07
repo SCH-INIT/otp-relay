@@ -9,7 +9,7 @@ LIVE_ROOT = Path("/opt/otp-relay")
 
 # Explicit allowlist for safe UI-only deployment.
 ALLOWED_FILES = [
-    Path("frontend/app.js"),
+    Path("frontend/app.jsx"),
     Path("frontend/index.html"),
     Path("frontend/style.css"),
     Path("frontend/guide.html"),
