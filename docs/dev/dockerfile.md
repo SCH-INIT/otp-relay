@@ -42,8 +42,9 @@ widely used, and easy to debug.
 
 ## Non-root user
 
-The container runs as `otprelay`, a system user with no login shell and no
-home directory — the same convention used in the systemd deployment.
+The container runs as `otprelay`, a system user with UID 999, no login shell,
+and no home directory. The UID is pinned explicitly in the Dockerfile to match
+the `runAsUser: 999` constraint in the Kubernetes pod security context.
 
 Running as root inside a container is a security risk. If the application is
 compromised, a root container has far more ability to cause damage on the host.
@@ -129,12 +130,12 @@ with a different package, the same fix applies.
 
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD /app/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/queue')"
+    CMD /app/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"
 ```
 
 The `HEALTHCHECK` instruction tells Docker (and by extension Kubernetes) how
-to determine whether the container is healthy. It polls `/admin/queue` every
-30 seconds. If the app is up and the queue endpoint responds, the container is
+to determine whether the container is healthy. It polls `/healthz` every
+30 seconds. If the app is up and the health endpoint responds, the container is
 healthy.
 
 Note that we use `/app/venv/bin/python` here for the same reason as the CMD
@@ -170,7 +171,7 @@ This constraint is resolved in Phase 2 when the queue moves to Redis.
 | `data/users.xlsx` | Lives on the `PersistentVolumeClaim`, not in the image |
 | `data/audit.log` | Same as above |
 | `venv/` source | Rebuilt cleanly during `docker build` — never copy a local venv into an image |
-| `monitor.py` | Separate process, will become its own pod in a later phase |
+| `monitor.py` | Separate process, runs in its own pod (`Dockerfile.monitor`) |
 | `nginx/` | TLS termination is the ingress controller's job, not the app container's |
 | `systemd/` | Irrelevant inside a container — Kubernetes manages the process lifecycle |
 | `install.sh`, `update.sh` | Systemd deployment tools, not needed here |

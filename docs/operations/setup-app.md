@@ -52,7 +52,8 @@ Before following this guide, you need:
       folder copied across
 - [ ] The `secret.env` file created with the real token value (Christian
       provides this)
-- [ ] The `otp-relay-latest.tar` image file from Christian, sitting in `/tmp/`
+- [ ] The `otp-relay-latest.tar` and `otp-monitor-latest.tar` image files
+      from Christian, sitting in `/tmp/`
 
 ---
 
@@ -88,22 +89,24 @@ The rest of this guide uses `kubectl` for brevity — remember it means
 
 ---
 
-### 1.2 — import the container image
+### 1.2 — import the container images
 
-Christian has copied `otp-relay-latest.tar` to `/tmp/`. Import it into K3s:
+Christian has copied `otp-relay-latest.tar` and `otp-monitor-latest.tar` to
+`/tmp/`. Import both into K3s:
 
 ```bash
 sudo k3s ctr images import /tmp/otp-relay-latest.tar
+sudo k3s ctr images import /tmp/otp-monitor-latest.tar
 ```
 
-This makes the image available to K3s without needing a registry. Verify it
+This makes the images available to K3s without needing a registry. Verify they
 arrived:
 
 ```bash
-sudo k3s ctr images list | grep otp-relay
+sudo k3s ctr images list | grep otp
 ```
 
-You should see `otp-relay:latest` in the output.
+You should see `otp-relay:latest` and `otp-monitor:latest` in the output.
 
 ---
 
@@ -150,7 +153,21 @@ kubectl get secret otp-relay-secrets -n otp-relay
 
 ---
 
-### 1.5 — apply the remaining manifests
+### 1.5 — label the storage node
+
+Both the app and the monitor share a volume (PVC) that can only be mounted on
+one node at a time. Pick a worker node and label it so both pods land there:
+
+```bash
+kubectl label node srvk3wrk01 otp-relay/storage=true
+```
+
+Replace `srvk3wrk01` with whichever worker node you want to use. You can check
+your node names with `kubectl get nodes`.
+
+---
+
+### 1.6 — apply the remaining manifests
 
 Apply them in this order:
 
@@ -158,6 +175,7 @@ Apply them in this order:
 kubectl apply -f k8s/manifests/configmap.yaml
 kubectl apply -f k8s/manifests/pvc.yaml
 kubectl apply -f k8s/manifests/deployment.yaml
+kubectl apply -f k8s/manifests/deployment-monitor.yaml
 kubectl apply -f k8s/manifests/service.yaml
 ```
 
@@ -166,9 +184,9 @@ Each command should respond with `created` or `configured`. If you see
 
 ---
 
-### 1.6 — check everything is running
+### 1.7 — check everything is running
 
-Check the pod:
+Check the pods:
 
 ```bash
 kubectl get pods -n otp-relay
@@ -177,8 +195,9 @@ kubectl get pods -n otp-relay
 You should see something like:
 
 ```
-NAME                         READY   STATUS    RESTARTS   AGE
-otp-relay-6d4f9b8c7-xk2pq   1/1     Running   0          45s
+NAME                           READY   STATUS    RESTARTS   AGE
+otp-relay-6d4f9b8c7-xk2pq     1/1     Running   0          45s
+otp-monitor-8b5c7d9f2-rm4kj   1/1     Running   0          42s
 ```
 
 `1/1` means one container running out of one expected. `Running` is what you
@@ -199,29 +218,34 @@ see the OTP Relay portal.
 
 ## Part 2 — updating the app
 
-Christian sends you a new `otp-relay-latest.tar`. Here is what you do:
+Christian sends you new image tar files. Here is what you do:
 
-### 2.1 — import the new image
+### 2.1 — import the new images
 
 ```bash
 sudo k3s ctr images import /tmp/otp-relay-latest.tar
+sudo k3s ctr images import /tmp/otp-monitor-latest.tar
 ```
 
-### 2.2 — restart the deployment
+Import whichever images have changed. You can import both every time to be safe.
 
-Tell Kubernetes to restart the pod with the new image:
+### 2.2 — restart the deployments
+
+Tell Kubernetes to restart the pods with the new images:
 
 ```bash
 kubectl rollout restart deployment/otp-relay -n otp-relay
+kubectl rollout restart deployment/otp-monitor -n otp-relay
 ```
 
-Kubernetes starts a new pod with the new image, waits until it is healthy,
-then removes the old pod. The app stays available during the update.
+Kubernetes starts new pods with the new images, waits until they are healthy,
+then removes the old pods. The app stays available during the update.
 
 ### 2.3 — verify the update
 
 ```bash
 kubectl rollout status deployment/otp-relay -n otp-relay
+kubectl rollout status deployment/otp-monitor -n otp-relay
 ```
 
 When it says `successfully rolled out`, the update is done.
@@ -350,12 +374,14 @@ If that returns JSON, the app is fine and the issue is the browser or network.
 ## Part 5 — useful commands at a glance
 
 ```bash
-kubectl get pods -n otp-relay                          # is it running?
+kubectl get pods -n otp-relay                          # are they running?
 kubectl get service -n otp-relay                       # what IP is it on?
-kubectl logs -n otp-relay deployment/otp-relay         # what is it saying?
-kubectl logs -n otp-relay deployment/otp-relay -f      # follow logs live
-kubectl rollout restart deployment/otp-relay -n otp-relay   # restart it
-kubectl rollout status deployment/otp-relay -n otp-relay    # update status
+kubectl logs -n otp-relay deployment/otp-relay         # app logs
+kubectl logs -n otp-relay deployment/otp-relay -f      # follow app logs live
+kubectl logs -n otp-relay deployment/otp-monitor       # monitor logs
+kubectl rollout restart deployment/otp-relay -n otp-relay   # restart app
+kubectl rollout restart deployment/otp-monitor -n otp-relay # restart monitor
+kubectl rollout status deployment/otp-relay -n otp-relay    # app update status
 kubectl top pod -n otp-relay                           # resource usage
 kubectl describe pod -n otp-relay <pod-name>           # deep diagnostics
 ```

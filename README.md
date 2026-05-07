@@ -1,15 +1,14 @@
 # OTP Relay
-**Ubuntu 24.04 LTS · Company LAN · On-screen OTP delivery**
-Server: `srvotp26.init-db.lan` · Portal: `https://srvotp26.init-db.lan`
+**Kubernetes (K3s) · Company LAN · On-screen OTP delivery**
 
 ---
 
-## How It Works
+## How it works
 
 ```
 iPhone 16 (company WiFi)
-   ↓  iOS 26 Shortcut → HTTPS POST /sms-received
-srvotp26 (Ubuntu 24.04 VM)
+   ↓  iOS Shortcut → HTTP POST /sms-received
+K3s cluster (otp-relay pod)
    ↓  matches SMS to the active claimant
    ↓  stores OTP in memory (never on disk)
 Portal (user's browser)
@@ -17,428 +16,183 @@ Portal (user's browser)
 OTP appears on screen — no email involved
 ```
 
-1. User opens the portal → enters their 2 or 3 character token → clicks **Claim my slot**
-2. If the queue is empty, they become the active user immediately. If someone is ahead of them, they enter the waiting room and are told not to trigger their OTP yet.
+1. User opens the portal, enters their token, clicks **Claim my slot**
+2. If the queue is empty they become the active user immediately. Otherwise they enter the waiting room and are told not to trigger their OTP yet.
 3. Once active, the user opens the platform and triggers the OTP SMS. They have **90 seconds** before their slot is reclaimed.
-4. iPhone receives SMS → Shortcut fires → POSTs to server over LAN
+4. iPhone receives SMS → Shortcut fires → POSTs to the cluster over LAN
 5. Server stores the OTP in memory (never logged, never written to disk) and unblocks the queue
-6. The OTP appears on the user's screen. It stays visible for **4 minutes 45 seconds**, during which other users can already claim the next slot.
+6. The OTP appears on the user's screen for **4 minutes 45 seconds**, during which other users can already claim the next slot.
 7. Every step is written to `data/audit.log`. OTP values are never recorded.
 
-A second service (`otp-monitor`) runs alongside the main app. It pings the iPhone every few minutes using ARP and forwards error-level audit events to an IT contact via WhatsApp.
+A second pod (`otp-monitor`) runs alongside the app. It pings the iPhone using ARP and forwards error-level audit events to IT via WhatsApp.
 
 ### Queue design
 
-Only one user is active at a time. This is a deliberate safety constraint: because OTP SMS messages carry no user-identifying information, the server cannot match an incoming SMS to a specific person. Concurrent active users would cause mis-delivery. The 90-second slot window keeps wait times short — a normal flow completes in under 30 seconds.
+Only one user is active at a time. OTP SMS messages carry no user-identifying information, so the server cannot match an incoming SMS to a specific person. Concurrent active users would cause mis-delivery. The 90-second slot window keeps wait times short.
 
 ---
 
-## Repository Structure
+## Repository structure
 
 ```
-otp-relay/
-├── main.py                  # FastAPI application
-├── monitor.py               # Phone watcher + WhatsApp alert forwarder
-├── install.sh               # Fresh install from this repo
-├── update.sh                # git pull + sync systemd units + restart
-├── deploy_users.sh          # Hot-reload users.xlsx without restarting
-├── test_otp_relay.py        # End-to-end test suite
-├── .env.template            # Config template — copy to .env and fill in
-├── .gitignore
-├── README.md
+otp-relay/ (k8s branch)
+├── main.py                          # FastAPI application
+├── monitor.py                       # Phone watcher + WhatsApp alert forwarder
+├── requirements.txt                 # Python dependencies
+├── install-otp-relay-k8s.sh         # K3s installer script
+├── .github/
+│   └── workflows/
+│       └── deploy-k3s.yml           # GitHub Actions CI/CD
 ├── frontend/
-│   ├── index.html           # Portal markup (structure only)
-│   ├── style.css            # All styles — INIT design system
-│   └── app.js               # All UI logic — edit this for frontend changes
-├── nginx/
-│   └── otp-relay.conf       # nginx reverse proxy config
+│   ├── index.html                   # Portal markup
+│   ├── app.jsx                      # React UI (Babel in-browser)
+│   ├── guide.html                   # Help page pop-out
+│   └── style.css                    # All styles
 ├── scripts/
+│   ├── build_help_docs.py           # Builds help page content from docs/help/
 │   └── generate_sample_users.py
-└── systemd/
-    ├── otp-relay.service    # Main app systemd unit
-    └── otp-monitor.service  # Monitor systemd unit
+├── docs/
+│   ├── k8s-plan.md                  # Architecture plan and phased roadmap
+│   ├── diagrams/                    # SVG architecture diagrams
+│   ├── dev/
+│   │   └── dockerfile.md            # Dockerfile design decisions
+│   ├── operations/
+│   │   ├── build-guide.md           # Image build and deploy workflow
+│   │   ├── setup-app.md             # Beginner ops guide (for Jathin)
+│   │   └── github-actions-deploy.md # CI/CD setup and operations
+│   └── help/
+│       ├── assets/                  # Screenshots for help pages
+│       └── 00-overview.md … 11-notes-and-tips.md
+└── k8s/
+    ├── Dockerfile                   # App container image
+    ├── Dockerfile.monitor           # Monitor container image
+    └── manifests/
+        ├── namespace.yaml
+        ├── configmap.yaml
+        ├── secret-example.env
+        ├── pvc.yaml
+        ├── deployment.yaml
+        ├── deployment-monitor.yaml
+        └── service.yaml
 ```
 
-> `.env`, `venv/`, and `data/` are intentionally excluded from git.
+> `data/`, `.env`, `k8s/manifests/secret.env`, `*.log`, and `*.tar` are excluded from git.
 
 ---
 
-## Deployment Details
+## Deployment overview
 
 | Item | Value |
 |---|---|
-| Server hostname | `srvotp26.init-db.lan` |
-| Portal URL | `https://srvotp26.init-db.lan` |
-| Service user | `otprelay` (system account, no login) |
-| Monitor user | `root` (required for ARP raw socket access) |
-| App directory | `/opt/otp-relay/` |
-| Data directory | `/opt/otp-relay/data/` |
-| Audit log | `/opt/otp-relay/data/audit.log` |
-| User list | `/opt/otp-relay/data/users.xlsx` |
-| Python venv | `/opt/otp-relay/venv/` (not in git — created by install.sh) |
-| TLS certificate | `/etc/ssl/otp-relay/server.crt` |
-| TLS key | `/etc/ssl/otp-relay/server.key` |
-| nginx config | `/etc/nginx/sites-available/otp-relay` |
-| systemd units | `/etc/systemd/system/otp-relay.service`, `otp-monitor.service` |
-| Environment config | `/opt/otp-relay/.env` (not in git) |
+| Cluster | K3s on bare metal (3 nodes) |
+| Namespace | `otp-relay` |
+| App image | `otp-relay:latest` (local import, no registry) |
+| Monitor image | `otp-monitor:latest` (local import, no registry) |
+| Ingress | MetalLB LoadBalancer → port 80 → pod 8000 |
+| Persistent data | PVC at `/app/data/` (users.xlsx, audit.log, wizard state, admin config) |
+| Secrets | `otp-relay-secrets` (SMS token, WhatsApp credentials) |
+| Config | `otp-relay-config` ConfigMap (timers, paths, monitor settings, admin tokens) |
+| CI/CD | GitHub Actions with self-hosted runner on K3s node |
+
+Both the app and monitor pods are pinned to the same worker node via `nodeSelector` (`otp-relay/storage=true`) because the PVC uses `ReadWriteOnce`.
 
 ---
 
-## File Permissions
+## Quick start
 
-```
-/opt/otp-relay/                  root:root         755
-├── main.py                      root:root         644
-├── monitor.py                   root:root         755
-├── install.sh                   root:root         755
-├── update.sh                    root:root         755
-├── deploy_users.sh              root:root         755
-├── test_otp_relay.py            root:root         755
-├── .env.template                root:root         644
-├── .env                         root:otprelay     640  (not in git)
-├── frontend/
-│   ├── index.html               root:root         644
-│   ├── style.css                root:root         644
-│   └── app.js                   root:root         644
-├── nginx/
-│   └── otp-relay.conf.template  root:root         644
-├── systemd/
-│   ├── otp-relay.service        root:root         644
-│   └── otp-monitor.service      root:root         644
-├── venv/                        root:root         755  (not in git)
-└── data/                        otprelay:otprelay 700  (not in git)
-    ├── users.xlsx               otprelay:otprelay 600
-    └── audit.log                otprelay:otprelay 600
-```
-
----
-
-## Fresh Install (Ubuntu 24.04)
+Full setup instructions are in `docs/operations/setup-app.md`. The short version:
 
 ```bash
-# Clone the repo into the install directory
-sudo git clone git@github.com:SCH-INIT/otp-relay.git /opt/otp-relay
-cd /opt/otp-relay
+# Label the storage node
+kubectl label node srvk3wrk01 otp-relay/storage=true
 
-# Run the installer
-sudo bash install.sh
-```
+# Create namespace
+kubectl apply -f k8s/manifests/namespace.yaml
 
-`install.sh` creates the venv, sets permissions, generates the TLS cert, configures nginx and both systemd services — all in one shot. It will not overwrite an existing `.env`.
+# Create secret (copy secret-example.env to secret.env first, fill in values)
+kubectl create secret generic otp-relay-secrets \
+  --from-env-file=k8s/manifests/secret.env \
+  --namespace=otp-relay \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-After running the installer, disable the default nginx site which would otherwise interfere:
+# Import images
+sudo k3s ctr images import otp-relay-latest.tar
+sudo k3s ctr images import otp-monitor-latest.tar
 
-```bash
-sudo rm /etc/nginx/sites-enabled/default
-sudo systemctl reload nginx
-```
-
-### After running the installer
-
-Edit `.env`:
-
-```bash
-sudo nano /opt/otp-relay/.env
-```
-
-Key values to fill in:
-
-| Variable | Notes |
-|---|---|
-| `SERVER_HOSTNAME` | e.g. `srvotp26.init-db.lan` — used for nginx config, TLS cert, and portal URL |
-| `SERVER_IP` | Server LAN IP — added to TLS cert SAN so the iPhone Shortcut can connect by IP if needed |
-| `SMS_SECRET_TOKEN` | Generate: `python3 -c "import secrets; print(secrets.token_hex(32))"` — paste into Shortcut |
-| `CLAIM_EXPIRY_SEC` | Seconds the active user has to trigger their OTP before being evicted (default: `90`) |
-| `OTP_DISPLAY_SEC` | Seconds the OTP stays visible on screen after arrival (default: `285` = 4 min 45 sec) |
-| `WHATSAPP_API_KEY` | From CallMeBot registration (see Monitor & Alerts section) |
-| `WHATSAPP_RECIPIENT` | IT contact number in full international format: `+971501234567` |
-| `PHONE_IP` | Static IP of the company iPhone — ask IT to set a DHCP reservation |
-| `PHONE_INTERFACE` | Network interface name — check with `ip link` (typically `ens33`) |
-
-SMTP settings are only needed if you use `/admin/smtp-test` for Exchange diagnostics. They play no role in OTP delivery.
-
-Then start the services:
-
-```bash
-sudo systemctl start otp-relay
-sudo systemctl start otp-monitor
-sudo systemctl status otp-relay otp-monitor
-```
-
-Deploy the user list (place `otp-relay-users.xlsx` in your home directory first):
-
-```bash
-sudo bash /opt/otp-relay/deploy_users.sh
+# Apply manifests
+kubectl apply -f k8s/manifests/configmap.yaml
+kubectl apply -f k8s/manifests/pvc.yaml
+kubectl apply -f k8s/manifests/deployment.yaml
+kubectl apply -f k8s/manifests/deployment-monitor.yaml
+kubectl apply -f k8s/manifests/service.yaml
 ```
 
 ---
 
 ## Updating
 
-```bash
-sudo bash /opt/otp-relay/update.sh            # pull latest + sync units + restart both services
-sudo bash /opt/otp-relay/update.sh --no-restart  # pull only
-```
+The recommended path is GitHub Actions (push to trigger deploy). Manual fallback:
 
-`update.sh` automatically detects changes to systemd unit files and re-copies them to `/etc/systemd/system/`, so unit changes deploy without manual steps.
+```bash
+# Build images
+docker build -t otp-relay:latest -f k8s/Dockerfile .
+docker build -t otp-monitor:latest -f k8s/Dockerfile.monitor .
+
+# Export, copy to server, import
+docker save otp-relay:latest -o otp-relay-latest.tar
+docker save otp-monitor:latest -o otp-monitor-latest.tar
+scp *.tar user@server:/tmp/
+sudo k3s ctr images import /tmp/otp-relay-latest.tar
+sudo k3s ctr images import /tmp/otp-monitor-latest.tar
+
+# Restart
+kubectl rollout restart deployment/otp-relay -n otp-relay
+kubectl rollout restart deployment/otp-monitor -n otp-relay
+```
 
 ---
 
-## Monitor & Alerts
+## Monitor and alerts
 
-`monitor.py` runs as the `otp-monitor` systemd service and does two things in parallel:
+`monitor.py` runs as its own pod with `hostNetwork: true` (required for ARP to reach the iPhone on the physical LAN) and does two things:
 
-**Phone watcher** — sends ARP requests to the iPhone every `PHONE_PING_INTERVAL` seconds. ARP is used instead of ICMP ping because iOS filters ping in low-power state but must respond to ARP to maintain network presence. If `PHONE_OFFLINE_THRESHOLD` consecutive checks fail, a `phone_offline` event is written to the audit log and a WhatsApp alert is sent. Recovery is detected and alerted the same way.
+**Phone watcher** — sends ARP requests to the iPhone at regular intervals. ARP is used instead of ICMP ping because iOS filters ping in low-power state but must respond to ARP. If consecutive checks fail, a WhatsApp alert is sent via CallMeBot.
 
-**Log forwarder** — tails the audit log in real time. Any entry at or above `ALERT_LEVEL` is forwarded to the IT contact via WhatsApp (CallMeBot). Multiple events arriving within `BATCH_WINDOW_SEC` are grouped into a single message to avoid flooding.
+**Log forwarder** — tails the audit log in real time. Entries at or above `ALERT_LEVEL` are forwarded to IT via WhatsApp. Events within `BATCH_WINDOW_SEC` are grouped to avoid flooding.
 
-### CallMeBot registration (one time per recipient)
+---
 
-1. Add `+34 644 64 90 27` to WhatsApp contacts as "CallMeBot"
-2. Send this exact message to that number on WhatsApp: `I allow callmebot to send me messages`
-3. You will receive an API key within a few minutes
-4. Add it to `.env` as `WHATSAPP_API_KEY`
+## Useful commands
 
-### Alert level
+```bash
+kubectl get pods -n otp-relay                                # pod status
+kubectl get svc -n otp-relay                                 # service IP
+kubectl logs -n otp-relay deployment/otp-relay                # app logs
+kubectl logs -n otp-relay deployment/otp-monitor              # monitor logs
+kubectl rollout restart deployment/otp-relay -n otp-relay     # restart app
+kubectl rollout restart deployment/otp-monitor -n otp-relay   # restart monitor
+kubectl top pod -n otp-relay                                  # resource usage
+kubectl describe pod -n otp-relay <pod-name>                  # diagnostics
+```
 
-`ALERT_LEVEL` in `.env` controls the minimum severity that triggers a WhatsApp message:
+---
 
-| Value | What gets sent |
+## Documentation
+
+| Document | What it covers |
 |---|---|
-| `error` | Errors only — default, recommended for normal operation |
-| `warn` | Warnings and errors — useful when troubleshooting |
-| `info` | Everything — use only for active debugging sessions |
-
-Change it in `.env` and restart `otp-monitor` to apply.
-
----
-
-## iPhone Shortcut Setup (iOS 26)
-
-1. Open **Shortcuts** → **Automation** → **+** → **New Automation**
-2. Trigger: **Message Received**
-   - From: the OTP sender number (exactly as it appears in Messages)
-   - Run Immediately: **ON**
-   - Notify When Run: **OFF**
-3. Add actions:
-
-**Action 1 — Get plain text from message:**
-- Add: **Shortcut Input**
-- Add: **Get Text from Input** → input: Shortcut Input
-
-**Action 2 — POST to server:**
-- Add: **Get Contents of URL**
-- URL: `https://srvotp26.init-db.lan/sms-received`
-- Method: **POST**
-- Headers:
-  - `X-Secret-Token` : *(paste value from SMS_SECRET_TOKEN in .env — no quotes)*
-- Request Body: **JSON**
-  - Key: `body` → Value: select the **Get text from** variable (the output of Action 1 — tap the variable picker, do not use "Shortcut Input" directly)
-
-**Action 3 — Suppress notification:**
-- Add: **Stop and Output**
-
-4. Tap **Done**
-
-> If the Shortcut stops firing after an iOS update, check that **Run Immediately** is still ON — iOS sometimes resets this.
-
-### Troubleshooting the Shortcut
-
-If the Shortcut fires but you see no `sms_received` event in the log, the most common causes are:
-
-- iPhone dropped off the company WiFi — check Settings → WiFi, reconnect if needed. DNS for `.lan` only resolves on the internal network.
-- The secret token in the Shortcut header doesn't match `SMS_SECRET_TOKEN` in `.env` — look for `sms_rejected` in the audit log.
-- iOS cached stale DNS — toggle WiFi off and back on to flush.
-- Certificate error in Shortcut despite Safari working — reboot the iPhone. Shortcuts runs in a background context that requires a reboot to pick up new certificate trust settings.
-- "Automation failed / Last attempt to run your Shortcut failed" — check that the automation trigger has **Run Immediately: ON**. iOS sometimes resets this after updates.
-
-### Trust the self-signed certificate on iPhone
-
-```bash
-# On server — temporarily expose cert for download
-sudo cp /etc/ssl/otp-relay/server.crt /opt/otp-relay/frontend/srvotp26.crt
-```
-
-On iPhone:
-1. Safari → `http://srvotp26.init-db.lan/srvotp26.crt`
-2. **Settings → General → VPN & Device Management** → Install profile
-3. **Settings → General → About → Certificate Trust Settings** → toggle ON
-
-```bash
-# Remove cert from web root once installed
-sudo rm /opt/otp-relay/frontend/srvotp26.crt
-```
-
-> ⚠️ **Reboot the iPhone after trusting the certificate.** iOS Shortcuts runs in a background context that does not pick up new certificate trust settings until after a reboot. Safari will work immediately, but the Shortcut will keep failing with a certificate error until the phone is restarted.
-
-### Push certificate to company PCs (IT task)
-
-Deploy `/etc/ssl/otp-relay/server.crt` as a trusted root CA via Group Policy:
-
-1. Copy `server.crt` to a domain share
-2. Group Policy → Computer Configuration → Windows Settings → Security Settings
-   → Public Key Policies → Trusted Root Certification Authorities → Import
+| `docs/k8s-plan.md` | Architecture plan, phased roadmap, design rationale |
+| `docs/dev/dockerfile.md` | Every decision in the Dockerfile, explained |
+| `docs/operations/setup-app.md` | Step-by-step first deploy guide (beginner level) |
+| `docs/operations/build-guide.md` | Image build and deployment workflows |
+| `docs/operations/github-actions-deploy.md` | CI/CD setup with self-hosted runner |
 
 ---
 
-## Updating the User List
+## Branches
 
-Place the updated Excel file in your home directory as `~/otp-relay-users.xlsx`, then:
-
-```bash
-sudo bash /opt/otp-relay/deploy_users.sh
-```
-
-This copies the file, sets correct permissions, and reloads the user list in the running service — no restart needed.
-
-### Excel format
-
-| Column | Rules |
+| Branch | Purpose |
 |---|---|
-| `token` | 2 or 3 characters, letters and digits only, unique per person |
-| `name` | Display name, free text |
-| `email` | Must contain `@`, must not be empty |
-
-Rows that fail validation are skipped and written to the audit log as `import_skipped` events with the exact row number and reason.
-
----
-
-## Exchange SMTP (diagnostics only)
-
-OTP delivery no longer uses email. The SMTP configuration is retained solely for the `/admin/smtp-test` endpoint, which lets you verify Exchange connectivity independently of OTP delivery.
-
-```bash
-curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
-```
-
-Expected: `{"status": "ok", "sent_to": "otp-relay@init-db.lan"}`
-
-This installation uses anonymous relay on port 25:
-
-```
-SMTP_PORT=25
-SMTP_AUTH=false
-SMTP_USE_TLS=false
-SMTP_PASSWORD=          (leave empty)
-```
-
-If you ever need authenticated SMTP (port 587), Exchange requires the full UPN format:
-```
-SMTP_USER=otp-relay@init-db.lan   ✓  correct
-SMTP_USER=INIT-DB\otp-relay       ✗  does not work
-SMTP_USER=otp-relay               ✗  does not work
-```
-
----
-
-## Simulate an SMS (for testing without the iPhone)
-
-```bash
-# 1. Claim a slot in the portal as normal — the OTP will appear on that browser tab
-# 2. Inject a fake SMS from the server
-curl -sk -X POST https://srvotp26.init-db.lan/sms-received \
-  -H "Content-Type: application/json" \
-  -H "X-Secret-Token: PASTE_YOUR_SMS_SECRET_TOKEN_HERE" \
-  -d '{"body": "Your login code is 482910. Valid for 5 minutes."}'
-```
-
-The OTP (`482910`) will appear on the portal immediately. It is not stored anywhere on the server.
-
----
-
-## Audit Log Events
-
-Every event is appended to `/opt/otp-relay/data/audit.log` (one JSON object per line).
-OTP values are never recorded — only metadata.
-
-| Event | Status | Meaning |
-|---|---|---|
-| `server_start` | info | Service started, users loaded |
-| `import_complete` | info/warn | Excel load finished — warn if any rows were skipped |
-| `import_skipped` | warn | A row was skipped — detail gives row number and reason |
-| `claim_queued` | info | User joined the queue |
-| `claim_duplicate` | warn | User clicked twice — second click ignored, remaining time returned |
-| `claim_rejected` | error | Unknown token submitted |
-| `claim_expired` | warn | 90 seconds passed with no SMS — user evicted from slot 1 |
-| `claim_cancelled` | info | User abandoned their queue slot via the Retry button |
-| `concurrent_risk` | warn | A second claim arrived within 30 s of the active one — no action taken, logged for IT visibility |
-| `sms_received` | info | iPhone Shortcut fired successfully |
-| `sms_unmatched` | warn | SMS arrived but queue was empty — discarded |
-| `sms_rejected` | error | Wrong secret token — check Shortcut configuration |
-| `otp_delivered` | info | OTP stored in memory and ready for display — queue unblocked |
-| `otp_display_expired` | info | OTP display window closed after 4 min 45 sec — purged from memory |
-| `otp_discarded` | info | User clicked Send again — OTP removed from memory before expiry |
-| `users_reloaded` | info | User list reloaded from Excel |
-| `monitor_start` | info | Monitor service started |
-| `monitor_error` | error | Monitor configuration error (e.g. network interface not found) |
-| `phone_offline` | error | iPhone unreachable after consecutive ARP failures — WhatsApp alert sent |
-| `phone_online` | error | iPhone reachable again after offline period — WhatsApp alert sent |
-
-> `phone_offline` and `phone_online` use `error` status so they pass through the alert filter at default `ALERT_LEVEL=error`.
-
-View in browser: `https://srvotp26.init-db.lan` → click **Admin**
-
-```bash
-# Live service log
-sudo journalctl -u otp-relay -f
-
-# Live monitor log
-sudo journalctl -u otp-monitor -f
-
-# Last 50 audit entries
-tail -50 /opt/otp-relay/data/audit.log | python3 -m json.tool
-
-# Warnings and errors only
-grep -E '"status": "(warn|error)"' /opt/otp-relay/data/audit.log
-
-# Import issues only
-grep import_skipped /opt/otp-relay/data/audit.log
-```
-
----
-
-## Day-to-Day Operations
-
-```bash
-# Service status
-sudo systemctl status otp-relay
-sudo systemctl status otp-monitor
-
-# Restart after config change
-sudo systemctl restart otp-relay
-sudo systemctl restart otp-monitor
-
-# Update from git
-sudo bash /opt/otp-relay/update.sh
-
-# Update user list
-sudo bash /opt/otp-relay/deploy_users.sh
-
-# Run end-to-end tests
-python3 /opt/otp-relay/test_otp_relay.py
-
-# Current queue and pending OTP count
-curl -sk https://srvotp26.init-db.lan/admin/queue | python3 -m json.tool
-
-# All loaded users
-curl -sk https://srvotp26.init-db.lan/admin/users | python3 -m json.tool
-
-# Test Exchange SMTP connectivity
-curl -sk https://srvotp26.init-db.lan/admin/smtp-test | python3 -m json.tool
-```
-
----
-
-## User Instructions (send to your team)
-
-> **How to get your OTP**
->
-> 1. Go to `https://srvotp26.init-db.lan`
-> 2. Enter your **2 or 3 character token** (ask IT if you don't have one)
-> 3. Click **Claim my slot**
-> 4. **If you see a waiting room:** someone is ahead of you — do not touch the platform yet. The page will tell you when it's your turn.
-> 5. **When you see "Go trigger your OTP now":** open the platform and request the SMS code immediately. You have 90 seconds.
-> 6. The OTP code appears on this page within seconds. Use it directly — no email needed.
->
-> ⚠️ Do not trigger the OTP on the platform until the page tells you to.
-> Doing so while someone else is active will disrupt their session.
+| `main` | Original systemd/VM deployment (legacy, not actively developed) |
+| `portal` | Portal features on the VM deployment model |
+| `k8s` | **Active.** Portal merged in, running on Kubernetes |

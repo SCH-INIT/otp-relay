@@ -22,14 +22,14 @@ We will:
 
 ## Repo strategy
 
-There are now two separate repo tracks:
+The portal and Kubernetes work now live in the same repository on separate branches:
 
-| Repo / branch | Purpose |
+| Branch | Purpose |
 |---|---|
-| `SCH-INIT/otp-relay` `portal` branch | Current VM/company-server portal deployment. Treat this as the working production-style baseline. |
-| `psi1703/k8s` `main` branch | Kubernetes learning/deployment repo. This should become the Kubernetes version of the same portal. |
+| `SCH-INIT/otp-relay` `portal` branch | Current VM/company-server portal deployment. The working production-style baseline. |
+| `SCH-INIT/otp-relay` `k8s` branch | Kubernetes deployment. Portal code merged in, plus Docker/K8s manifests, CI/CD, and consolidated docs. |
 
-Do not merge the repos blindly. The Kubernetes repo should copy the working portal application baseline, then add Docker/Kubernetes files around it.
+The `k8s` branch was seeded from the portal baseline and adds container and orchestration files around it.
 
 ---
 
@@ -57,37 +57,52 @@ The critical design point: the current queue and pending OTPs are process-local.
 
 ---
 
-## Target Kubernetes repo layout
+## Current repo layout
 
 ```text
-psi1703/k8s/
+SCH-INIT/otp-relay (k8s branch)
 ├── main.py
 ├── monitor.py
 ├── requirements.txt
 ├── README.md
 ├── .gitignore
+├── install-otp-relay-k8s.sh
+├── .github/
+│   └── workflows/
+│       └── deploy-k3s.yml
 ├── frontend/
 │   ├── index.html
 │   ├── app.jsx
 │   ├── guide.html
 │   └── style.css
 ├── scripts/
-├── k8s/
-│   ├── Dockerfile
-│   ├── Dockerfile.monitor
-│   ├── manifests/
-│   │   ├── namespace.yaml
-│   │   ├── configmap.yaml
-│   │   ├── secret-example.env
-│   │   ├── pvc.yaml
-│   │   ├── deployment.yaml
-│   │   ├── deployment-monitor.yaml
-│   │   └── service.yaml
-│   └── docs/
-└── docs/
-    └── diagrams/
-        ├── phase-map.svg
-        └── phase1-architecture.svg
+│   ├── build_help_docs.py
+│   └── generate_sample_users.py
+├── docs/
+│   ├── k8s-plan.md
+│   ├── diagrams/
+│   │   ├── phase-map.svg
+│   │   └── phase1-architecture.svg
+│   ├── dev/
+│   │   └── dockerfile.md
+│   ├── operations/
+│   │   ├── build-guide.md
+│   │   ├── setup-app.md
+│   │   └── github-actions-deploy.md
+│   └── help/
+│       ├── assets/
+│       └── 00-overview.md … 11-notes-and-tips.md
+└── k8s/
+    ├── Dockerfile
+    ├── Dockerfile.monitor
+    └── manifests/
+        ├── namespace.yaml
+        ├── configmap.yaml
+        ├── secret-example.env
+        ├── pvc.yaml
+        ├── deployment.yaml
+        ├── deployment-monitor.yaml
+        └── service.yaml
 ```
 
 Runtime data should not be committed:
