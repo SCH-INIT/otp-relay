@@ -6,7 +6,7 @@
 # for OTP delivery. SMTP config and /admin/smtp-test are retained for
 # diagnostics only.
 
-import os, re, asyncio, logging, smtplib, json, secrets
+import os, re, asyncio, logging, smtplib, json, secrets, threading
 from collections import deque
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
@@ -90,6 +90,7 @@ DATA_DIR = _resolve_runtime_path(os.environ.get("OTP_RELAY_DATA_DIR", "data"))
 WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
+WIZARD_DB_LOCK = threading.Lock()
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
 DEFAULT_TOKEN_ENV_ACCESS: Dict[str, Dict[str, str]] = {
     "BMI": {"test_env": "", "prod_env": ""},
@@ -791,12 +792,13 @@ async def wizard_progress_save(
         _require_admin(x_admin_session)
     else:
         _require_portal_token(token, x_portal_session)
-    db = _wizard_db()
     row = payload.model_dump()
     row["token"] = token
     row["updated_at"] = _now_iso()
-    db[token] = row
-    _save_wizard_db(db)
+    with WIZARD_DB_LOCK:
+        db = _wizard_db()
+        db[token] = row
+        _save_wizard_db(db)
     audit("wizard_progress_saved", token=token, detail="Wizard profile/progress updated")
     return {"status": "ok", "record": row}
 
@@ -814,8 +816,10 @@ async def wizard_progress_get(
         _require_admin(x_admin_session)
     else:
         _require_portal_token(token, x_portal_session)
-    db = _wizard_db()
-    return db.get(token, {
+    with WIZARD_DB_LOCK:
+        db = _wizard_db()
+        record = db.get(token)
+    return record or {
         "token": token,
         "display_name": users[token]["name"],
         "iits_username": "",
@@ -825,13 +829,14 @@ async def wizard_progress_get(
         "iits_pw_date": None,
         "adm_pw_date": None,
         "vpn_date": None,
-    })
+    }
 
 
 @app.get("/admin/wizard")
 async def admin_wizard(x_admin_session: Optional[str] = Header(default=None)):
     _require_admin(x_admin_session)
-    db = _wizard_db()
+    with WIZARD_DB_LOCK:
+        db = _wizard_db()
     env_access = _config_db().get("token_env_access", {})
     merged = []
     for token, u in sorted(users.items()):
