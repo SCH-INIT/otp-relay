@@ -4,7 +4,7 @@ on:
   push:
     branches: [ portal ]
     paths:
-      - "frontend/app.jsx"
+      - "frontend/app.js"
       - "frontend/index.html"
       - "frontend/style.css"
       - "frontend/guide.html"
