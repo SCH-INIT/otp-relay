@@ -93,6 +93,7 @@ CONFIG_FILE = DATA_DIR / "admin_config.json"
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
 ADMIN_TTL_SECONDS = 8 * 60 * 60
 ADMIN_SESSIONS: Dict[str, float] = {}
+PORTAL_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
 def _now_iso() -> str:
@@ -159,6 +160,28 @@ def _require_admin(session: Optional[str]) -> None:
     if not ts:
         raise HTTPException(status_code=401, detail="Invalid admin session")
     ADMIN_SESSIONS[session] = datetime.now(timezone.utc).timestamp()
+
+
+def _purge_portal_sessions() -> None:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    stale = [
+        session for session, data in PORTAL_SESSIONS.items()
+        if now_ts - float(data.get("ts", 0)) > ADMIN_TTL_SECONDS
+    ]
+    for session in stale:
+        PORTAL_SESSIONS.pop(session, None)
+
+
+def _require_portal_token(token: str, session: Optional[str]) -> None:
+    _purge_portal_sessions()
+    if not session:
+        raise HTTPException(status_code=401, detail="Missing portal session")
+    data = PORTAL_SESSIONS.get(session)
+    if not data:
+        raise HTTPException(status_code=401, detail="Invalid portal session")
+    if data.get("token") != token:
+        raise HTTPException(status_code=403, detail="Portal session does not match token")
+    data["ts"] = datetime.now(timezone.utc).timestamp()
 
 
 class WizardRecord(BaseModel):
@@ -363,8 +386,13 @@ async def portal_login(payload: TokenLoginPayload):
     token = payload.token.strip().upper()
     if token not in users:
         raise HTTPException(status_code=404, detail="Token not recognised. Check with IT.")
+    session = secrets.token_urlsafe(24)
+    PORTAL_SESSIONS[session] = {
+        "token": token,
+        "ts": datetime.now(timezone.utc).timestamp(),
+    }
     user = users[token]
-    return {"token": user["token"], "name": user["name"], "email": user["email"]}
+    return {"token": user["token"], "name": user["name"], "email": user["email"], "session": session}
 
 
 @app.post("/claim-otp")
@@ -657,10 +685,18 @@ async def admin_config_save(payload: ConfigPayload, x_admin_session: Optional[st
 
 
 @app.post("/wizard/progress")
-async def wizard_progress_save(payload: WizardRecord):
+async def wizard_progress_save(
+    payload: WizardRecord,
+    x_portal_session: Optional[str] = Header(default=None),
+    x_admin_session: Optional[str] = Header(default=None),
+):
     token = payload.token.strip().upper()
     if token not in users:
         raise HTTPException(status_code=404, detail="Unknown token")
+    if x_admin_session:
+        _require_admin(x_admin_session)
+    else:
+        _require_portal_token(token, x_portal_session)
     db = _wizard_db()
     row = payload.model_dump()
     row["token"] = token
@@ -672,10 +708,18 @@ async def wizard_progress_save(payload: WizardRecord):
 
 
 @app.get("/wizard/progress/{token}")
-async def wizard_progress_get(token: str):
+async def wizard_progress_get(
+    token: str,
+    x_portal_session: Optional[str] = Header(default=None),
+    x_admin_session: Optional[str] = Header(default=None),
+):
     token = token.strip().upper()
     if token not in users:
         raise HTTPException(status_code=404, detail="Unknown token")
+    if x_admin_session:
+        _require_admin(x_admin_session)
+    else:
+        _require_portal_token(token, x_portal_session)
     db = _wizard_db()
     return db.get(token, {
         "token": token,
