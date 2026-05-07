@@ -249,7 +249,17 @@ fi
 
 section "6/8  Environment configuration"
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
-  cp "${INSTALL_DIR}/.env.template" "${INSTALL_DIR}/.env"
+  ENV_TEMPLATE=""
+  if [[ -f "${INSTALL_DIR}/.env.template" ]]; then
+    ENV_TEMPLATE="${INSTALL_DIR}/.env.template"
+  elif [[ -f "${INSTALL_DIR}/_env.template" ]]; then
+    ENV_TEMPLATE="${INSTALL_DIR}/_env.template"
+  else
+    fail "No environment template found: expected .env.template or _env.template"
+    exit 1
+  fi
+
+  cp "${ENV_TEMPLATE}" "${INSTALL_DIR}/.env"
   warn ".env created from template — leave it as a template for now if you are not ready to start services."
   warn "  Later edit: sudo nano ${INSTALL_DIR}/.env"
   warn "  Required before first app start: SERVER_HOSTNAME, SERVER_IP, SMS_SECRET_TOKEN"
