@@ -307,27 +307,6 @@ function fromDateInputValue(v) {
   return v ? new Date(`${v}T00:00:00`).toISOString() : null;
 }
 
-const TOKEN_ENV_ACCESS = {
-  BMI: { test_env: '', prod_env: '' },
-  CSG: { test_env: '', prod_env: '' },
-  GOE: { test_env: '', prod_env: '' },
-  HAD: { test_env: '', prod_env: '' },
-  LNA: { test_env: '', prod_env: 'Mobile Statistics' },
-  JYN: { test_env: '', prod_env: '' },
-  STN: { test_env: '', prod_env: '' },
-  TTR: { test_env: '', prod_env: 'Mobile Statistics' },
-  YSH: { test_env: '', prod_env: '' },
-  JNB: { test_env: '', prod_env: '' },
-  KTV: { test_env: '', prod_env: '' },
-  FAL: { test_env: '', prod_env: '' },
-  PZ: { test_env: '', prod_env: 'Mobile Statistics' },
-  RBM: { test_env: '', prod_env: '' },
-  GAL: { test_env: 'Mobile Guard', prod_env: 'Mobile Guard' },
-  BHI: { test_env: '', prod_env: '' },
-  MRZ: { test_env: 'Mobile Plan', prod_env: 'Mobile Plan' },
-  TOB: { test_env: 'Mobile Plan', prod_env: 'Mobile Plan' },
-  KG: { test_env: '', prod_env: '' },
-};
 
 function fmtShortDate(iso) {
   if (!iso) return '—';
@@ -396,8 +375,8 @@ function mergeAdminUsers(wizardUsers = [], loadedUsers = []) {
         iits_pw_date: wizard.iits_pw_date || null,
         adm_pw_date: wizard.adm_pw_date || null,
         vpn_date: wizard.vpn_date || null,
-        test_env: wizard.test_env || (TOKEN_ENV_ACCESS[token] && TOKEN_ENV_ACCESS[token].test_env) || '',
-        prod_env: wizard.prod_env || (TOKEN_ENV_ACCESS[token] && TOKEN_ENV_ACCESS[token].prod_env) || '',
+        test_env: wizard.test_env || '',
+        prod_env: wizard.prod_env || '',
         updated_at: wizard.updated_at || wizard.lastActive || null,
         lastActive: wizard.lastActive || wizard.updated_at || null,
       };
