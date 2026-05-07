@@ -42,8 +42,8 @@ const API = {
   claimStatus(token) { return this.json(`/claim-status/${encodeURIComponent(token)}`); },
   deleteClaim(token) { return this.json(`/claim-otp/${encodeURIComponent(token)}`, { method: 'DELETE' }); },
   portalLogin(token) { return this.json('/portal/login', { method: 'POST', body: JSON.stringify({ token }) }); },
-  saveWizard(payload) { return this.json('/wizard/progress', { method: 'POST', body: JSON.stringify(payload) }); },
-  getWizard(token) { return this.json(`/wizard/progress/${encodeURIComponent(token)}`); },
+  saveWizard(payload, headers = {}) { return this.json('/wizard/progress', { method: 'POST', headers, body: JSON.stringify(payload) }); },
+  getWizard(token, headers = {}) { return this.json(`/wizard/progress/${encodeURIComponent(token)}`, { headers }); },
   adminAuthStatus() { return this.json('/admin/auth/status'); },
   adminAuthSetup(credential, current) { return this.json('/admin/auth/setup', { method: 'POST', body: JSON.stringify({ credential, current }) }); },
   adminAuthLogin(credential) { return this.json('/admin/auth/login', { method: 'POST', body: JSON.stringify({ credential }) }); },
@@ -550,6 +550,7 @@ function App() {
   const [view, setView] = useState('otp');
   const [directoryUsers, setDirectoryUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [portalSession, setPortalSession] = useState(sessionStorage.getItem('portalUserSession') || '');
   const [login, setLogin] = useState({ tokenChars: ['', '', ''], error: '' });
   const [wizardUser, setWizardUser] = useState(emptyWizardUser());
   const [wizardStatus, setWizardStatus] = useState({ saving: false, message: '' });
@@ -563,9 +564,13 @@ function App() {
     const remembered = normalizeToken(sessionStorage.getItem('portalUserToken') || '');
     if (remembered) {
       API.portalLogin(remembered).then(found => {
+        sessionStorage.setItem('portalUserSession', found.session || '');
+        setPortalSession(found.session || '');
         setCurrentUser({ token: normalizeToken(found.token), name: found.name || '', email: found.email || '' });
       }).catch(() => {
         sessionStorage.removeItem('portalUserToken');
+        sessionStorage.removeItem('portalUserSession');
+        setPortalSession('');
       });
     }
   }, []);
@@ -581,7 +586,7 @@ function App() {
 
     async function refreshWizard(silent = false) {
       try {
-        const data = await API.getWizard(token);
+        const data = await API.getWizard(token, { 'X-Portal-Session': portalSession });
         if (cancelled) return;
         setWizardUser(prev => ({
           ...emptyWizardUser(token, currentUser.name || ''),
@@ -607,7 +612,7 @@ function App() {
       cancelled = true;
       clearInterval(poll);
     };
-  }, [currentUser?.token, currentUser?.name]);
+  }, [currentUser?.token, currentUser?.name, portalSession]);
 
   useEffect(() => {
     if (!otp.panel || otp.panel === 'claim' || !otp.token) return;
@@ -668,7 +673,7 @@ function App() {
     if (!next.token) return;
     setWizardStatus({ saving: true, message: 'Saving…' });
     try {
-      await API.saveWizard(next);
+      await API.saveWizard(next, { 'X-Portal-Session': portalSession });
       setWizardStatus({ saving: false, message: 'Saved to server' });
       setTimeout(() => setWizardStatus(s => s.message === 'Saved to server' ? { ...s, message: '' } : s), 1500);
     } catch (e) {
@@ -778,7 +783,7 @@ function App() {
     const current = admin.data?.users?.find(u => u.token === token);
     const completed = new Set(current?.adminCompleted || []);
     if (completed.has(stepId)) completed.delete(stepId); else completed.add(stepId);
-    await API.saveWizard({ ...current, token, adminCompleted: [...completed] });
+    await API.saveWizard({ ...current, token, adminCompleted: [...completed] }, { 'X-Admin-Session': admin.session });
     try { await API.notifyAdminTask({ token, step_id: stepId, action: completed.has(stepId) ? 'done' : 'undone' }); } catch {}
     await loadAdminData();
   }
@@ -818,7 +823,7 @@ function App() {
   }
 
 
-  async function submitLogin() {
+  async async function submitLogin() {
     const token = normalizeToken(login.tokenChars.join(''));
     if (!token || token.length < 2) {
       setLogin(s => ({ ...s, error: 'Enter a valid 2–3 character token.' }));
@@ -827,6 +832,8 @@ function App() {
     try {
       const found = await API.portalLogin(token);
       sessionStorage.setItem('portalUserToken', token);
+      sessionStorage.setItem('portalUserSession', found.session || '');
+      setPortalSession(found.session || '');
       setCurrentUser({ token, name: found.name || '', email: found.email || '' });
       setOtp(s => ({ ...s, token }));
     } catch (e) {
@@ -836,6 +843,8 @@ function App() {
 
   function logoutUser() {
     sessionStorage.removeItem('portalUserToken');
+    sessionStorage.removeItem('portalUserSession');
+    setPortalSession('');
     setCurrentUser(null);
     setWizardUser(emptyWizardUser());
     setOpenStep(null);
