@@ -1260,6 +1260,76 @@ function getGuidePages(step, guide) {
   return pages.concat(step.details || []);
 }
 
+
+const SAFE_HTML_TAGS = new Set([
+  'p', 'br', 'strong', 'b', 'em', 'i', 'u', 'code', 'pre', 'blockquote',
+  'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div'
+]);
+
+function isSafeHelpHref(href) {
+  const value = String(href || '').trim();
+  if (!value) return false;
+  if (value.startsWith('#') || value.startsWith('/')) return true;
+  try {
+    const parsed = new URL(value, window.location.origin);
+    return ['http:', 'https:', 'mailto:'].includes(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function safeHtmlNodeToReact(node, key) {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+  if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+  const tag = node.tagName.toLowerCase();
+  const children = Array.from(node.childNodes)
+    .map((child, idx) => safeHtmlNodeToReact(child, `${key}-${idx}`))
+    .filter(child => child !== null && child !== undefined && child !== '');
+
+  if (!SAFE_HTML_TAGS.has(tag)) return children.length ? children : null;
+
+  const props = { key };
+  if (tag === 'a') {
+    const href = node.getAttribute('href') || '';
+    if (isSafeHelpHref(href)) {
+      props.href = href;
+      props.target = '_blank';
+      props.rel = 'noopener noreferrer';
+    }
+  }
+  if ((tag === 'td' || tag === 'th') && node.hasAttribute('colspan')) {
+    const colSpan = parseInt(node.getAttribute('colspan'), 10);
+    if (Number.isFinite(colSpan) && colSpan > 0 && colSpan <= 20) props.colSpan = colSpan;
+  }
+  if ((tag === 'td' || tag === 'th') && node.hasAttribute('rowspan')) {
+    const rowSpan = parseInt(node.getAttribute('rowspan'), 10);
+    if (Number.isFinite(rowSpan) && rowSpan > 0 && rowSpan <= 20) props.rowSpan = rowSpan;
+  }
+
+  return React.createElement(tag, props, children.length ? children : null);
+}
+
+function SafeHtml({ html, className, onClick, fallback = 'Loading…' }) {
+  const [content, setContent] = useState([fallback]);
+
+  useEffect(() => {
+    const source = html || `<p>${fallback}</p>`;
+    try {
+      const parsed = new DOMParser().parseFromString(source, 'text/html');
+      const next = Array.from(parsed.body.childNodes)
+        .map((node, idx) => safeHtmlNodeToReact(node, `safe-html-${idx}`))
+        .filter(node => node !== null && node !== undefined && node !== '');
+      setContent(next.length ? next : [fallback]);
+    } catch {
+      setContent([fallback]);
+    }
+  }, [html, fallback]);
+
+  return <div className={className} onClick={onClick}>{content}</div>;
+}
+
 function GuideBlock({ block }) {
   if (!block) return null;
   if (block.type === 'info') return <div className="guide-block"><div className="inline-info">{block.text}</div></div>;
@@ -1362,7 +1432,7 @@ function GuideOverlay({ step, guide, page, setPage, onClose, onPopOut }) {
               <div className="small" style={{ marginTop: 12 }}>Use the tabs or the Back / Next buttons to move through only the help relevant to this wizard step.</div>
             </div>
           ) : activePage.type === 'html' ? (
-            <div className="guide-html" onClick={openGuideLink} dangerouslySetInnerHTML={{ __html: activePage.html || '' }} />
+            <SafeHtml className="guide-html" html={activePage.html || ''} onClick={openGuideLink} />
           ) : (
             <GuideBlock block={activePage} />
           )}
@@ -1485,7 +1555,7 @@ function HelpView({ faqOpen, setFaqOpen } = {}) {
                     </div>
                     {open && (
                       <div className="faq-a" style={{ display: 'block' }}>
-                        <div dangerouslySetInnerHTML={{ __html: docHtml[doc.slug] || '<p>Loading…</p>' }} />
+                        <SafeHtml html={docHtml[doc.slug] || '<p>Loading…</p>'} />
                       </div>
                     )}
                   </div>
