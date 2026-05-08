@@ -67,6 +67,8 @@ CONCURRENT_RISK_SEC = int(os.getenv("CONCURRENT_RISK_SEC", "30"))
 
 USERS_EXCEL_PATH = str(_resolve_runtime_path(os.getenv("USERS_EXCEL_PATH", "data/users.xlsx")))
 AUDIT_LOG_PATH   = str(_resolve_runtime_path(os.getenv("AUDIT_LOG_PATH", "data/audit.log")))
+AUDIT_LOG_MAX_BYTES = int(os.getenv("AUDIT_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
+AUDIT_LOG_BACKUPS = int(os.getenv("AUDIT_LOG_BACKUPS", "3"))
 
 # -- State ---------------------------------------------------------------------
 # Queue: max depth 1 enforced at claim time. Others wait and poll.
@@ -91,6 +93,7 @@ WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
 WIZARD_DB_LOCK = threading.Lock()
+AUDIT_LOG_LOCK = threading.Lock()
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
 DEFAULT_TOKEN_ENV_ACCESS: Dict[str, Dict[str, str]] = {
     "BMI": {"test_env": "", "prod_env": ""},
@@ -360,6 +363,25 @@ def load_users_from_excel(path: str) -> int:
 
 
 # -- Audit log -----------------------------------------------------------------
+def _rotate_audit_log_if_needed() -> None:
+    path = Path(AUDIT_LOG_PATH)
+    if AUDIT_LOG_MAX_BYTES <= 0:
+        return
+    if not path.exists() or path.stat().st_size < AUDIT_LOG_MAX_BYTES:
+        return
+
+    for idx in range(AUDIT_LOG_BACKUPS, 0, -1):
+        src = path.with_name(f"{path.name}.{idx}")
+        dst = path.with_name(f"{path.name}.{idx + 1}")
+        if src.exists():
+            if idx >= AUDIT_LOG_BACKUPS:
+                src.unlink()
+            else:
+                src.rename(dst)
+
+    path.rename(path.with_name(f"{path.name}.1"))
+
+
 def audit(event: str, token: Optional[str] = None, detail: str = "", status: str = "info"):
     entry = {
         "ts":     datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -370,8 +392,10 @@ def audit(event: str, token: Optional[str] = None, detail: str = "", status: str
     }
     try:
         Path(AUDIT_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        with open(AUDIT_LOG_PATH, "a") as f:
-            f.write(json.dumps(entry) + "\n")
+        with AUDIT_LOG_LOCK:
+            _rotate_audit_log_if_needed()
+            with open(AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
     except Exception as e:
         logger.warning(f"Could not write audit log: {e}")
     level = {"info": logging.INFO, "warn": logging.WARNING, "error": logging.ERROR}.get(status, logging.INFO)
@@ -380,15 +404,30 @@ def audit(event: str, token: Optional[str] = None, detail: str = "", status: str
 
 def read_audit_log(limit: int = 200) -> list:
     try:
-        lines = Path(AUDIT_LOG_PATH).read_text().strip().splitlines()
-        entries = [json.loads(l) for l in lines if l.strip()]
-        return list(reversed(entries))[:limit]
+        limit = max(1, min(int(limit), 1000))
+    except Exception:
+        limit = 200
+
+    try:
+        recent_lines = deque(maxlen=limit)
+        with AUDIT_LOG_LOCK:
+            with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        recent_lines.append(line)
+
+        entries = []
+        for line in reversed(recent_lines):
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return entries
     except FileNotFoundError:
         return []
     except Exception as e:
         logger.warning(f"Could not read audit log: {e}")
         return []
-
 
 # -- Queue and OTP state helpers ----------------------------------------------
 def purge_expired():
