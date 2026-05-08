@@ -280,32 +280,3 @@ if __name__ == "__main__":
 
     # Log tailer runs in the main thread (blocks forever)
     tail_audit_log()
-
-## Change made
-
-Only this reviewed minor issue was changed:
-
-audit("phone_online",
-      f"iPhone {PHONE_IP} is reachable again",
-      "error")
-
-to:
-
-audit("phone_online",
-      f"iPhone {PHONE_IP} is reachable again",
-      "info")
-
-## Why
-
-`phone_online` is a recovery event. Logging it as `error` is semantically wrong and can trigger unnecessary alerts. `phone_offline` remains `error`.
-
-## Verify after applying
-
-python3 -m py_compile monitor.py
-grep -n -A3 -B2 'phone_online' monitor.py
-
-Expected:
-
-audit("phone_online",
-      f"iPhone {PHONE_IP} is reachable again",
-      "info")
