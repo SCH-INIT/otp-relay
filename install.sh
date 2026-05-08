@@ -107,8 +107,7 @@ find_self_hosted_runner_user() {
   #   OTP_RELAY_RUNNER_USER=svc-ghrunner sudo -E bash install.sh
   local candidate="${OTP_RELAY_RUNNER_USER:-${GITHUB_RUNNER_USER:-}}"
   if [[ -n "${candidate}" ]] && id "${candidate}" &>/dev/null; then
-    printf '%s
-' "${candidate}"
+    printf '%s\n' "${candidate}"
     return 0
   fi
 
@@ -119,8 +118,7 @@ find_self_hosted_runner_user() {
     [[ -d "${runner_dir}" ]] || continue
     candidate="$(stat -c '%U' "${runner_dir}" 2>/dev/null || true)"
     if [[ -n "${candidate}" && "${candidate}" != "root" ]] && id "${candidate}" &>/dev/null; then
-      printf '%s
-' "${candidate}"
+      printf '%s\n' "${candidate}"
       return 0
     fi
   done
@@ -129,8 +127,7 @@ find_self_hosted_runner_user() {
   # self-hosted runner, SUDO_USER is a sensible fallback.
   candidate="${SUDO_USER:-}"
   if [[ -n "${candidate}" && "${candidate}" != "root" ]] && id "${candidate}" &>/dev/null; then
-    printf '%s
-' "${candidate}"
+    printf '%s\n' "${candidate}"
     return 0
   fi
 
@@ -159,22 +156,23 @@ apply_runner_managed_permissions() {
   chmod 644 "${INSTALL_DIR}/main.py"
   chmod 755 "${INSTALL_DIR}/monitor.py"
 
-  # Portal UI workflow updates these static frontend files directly.
+  # Portal UI workflow deploys generated/static frontend artifacts.
+  # app.jsx is source in the repo. The live portal serves generated app.js.
   touch "${INSTALL_DIR}/frontend/index.html" \
         "${INSTALL_DIR}/frontend/style.css" \
-        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/app.js" \
         "${INSTALL_DIR}/frontend/guide.html"
 
   chown "${runner_user}:${runner_user}" \
         "${INSTALL_DIR}/frontend/index.html" \
         "${INSTALL_DIR}/frontend/style.css" \
-        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/app.js" \
         "${INSTALL_DIR}/frontend/guide.html"
 
   chmod 644 \
         "${INSTALL_DIR}/frontend/index.html" \
         "${INSTALL_DIR}/frontend/style.css" \
-        "${INSTALL_DIR}/frontend/app.jsx" \
+        "${INSTALL_DIR}/frontend/app.js" \
         "${INSTALL_DIR}/frontend/guide.html"
 }
 
@@ -183,7 +181,7 @@ echo -e "${DIM}Ubuntu 24.04 LTS VM · Company LAN${RESET}\n"
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 
-section "1/8  System packages"
+section "1/9  System packages"
 apt-get update -qq
 apt-get install -y -qq \
   python3 \
@@ -192,12 +190,14 @@ apt-get install -y -qq \
   nginx \
   openssl \
   arping \
-  gettext-base
+  gettext-base \
+  nodejs \
+  npm
 ok "Packages installed"
 
 # ── 2. Service account ────────────────────────────────────────────────────────
 
-section "2/8  Service account"
+section "2/9  Service account"
 if ! id otprelay &>/dev/null; then
   useradd --system --no-create-home --shell /usr/sbin/nologin otprelay
   ok "Created system user: otprelay"
@@ -207,7 +207,7 @@ fi
 
 # ── 3. Data directory ─────────────────────────────────────────────────────────
 
-section "3/8  Data directory"
+section "3/9  Data directory"
 mkdir -p "${INSTALL_DIR}/data"
 chown -R otprelay:otprelay "${INSTALL_DIR}/data"
 chmod 700 "${INSTALL_DIR}/data"
@@ -215,7 +215,7 @@ ok "data/ directory ready"
 
 # ── 4. Python virtual environment ─────────────────────────────────────────────
 
-section "4/8  Python virtual environment"
+section "4/9  Python virtual environment"
 if [[ ! -f "${INSTALL_DIR}/venv/bin/uvicorn" ]]; then
   python3 -m venv "${INSTALL_DIR}/venv"
   "${INSTALL_DIR}/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv bcrypt markdown pyyaml
@@ -225,19 +225,45 @@ else
   ok "venv already exists — packages updated"
 fi
 
-# ── 5. Build Help Docs ────────────────────────────────────────────────────────
+# ── 5. Build Portal UI ────────────────────────────────────────────────────────
 
-section "5/8  Build Help Docs"
+section "5/9  Build Portal UI"
+cd "${INSTALL_DIR}/frontend"
+
+if [[ ! -f package.json ]]; then
+  fail "frontend/package.json is missing — cannot build frontend/app.js"
+  exit 1
+fi
+
+if [[ ! -f package-lock.json ]]; then
+  fail "frontend/package-lock.json is missing — run npm install in frontend/ and commit the lockfile"
+  exit 1
+fi
+
+npm ci --silent
+npm run build --silent
+test -s app.js
+
+# node_modules is only needed during the install-time build. The live portal
+# serves static app.js and should not keep npm dependencies in the live tree.
+rm -rf node_modules
+
+cd "${INSTALL_DIR}"
+ok "Portal UI built: frontend/app.js"
+
+# ── 6. Build Help Docs ────────────────────────────────────────────────────────
+
+section "6/9  Build Help Docs"
 cd "${INSTALL_DIR}"
 "${INSTALL_DIR}/venv/bin/python" scripts/build_help_docs.py
 ok "Help Docs built"
 
-# ── 5b. Remove .git from install directory ───────────────────────────────────
+# ── 6b. Remove .git from install directory ───────────────────────────────────
 # /opt/otp-relay is managed by the GitHub Actions runner going forward.
 # The runner _work clone is the only git repo — /opt/otp-relay receives
 # files copied by deploy scripts and must never be a git repo itself.
 
-section "5b/8  Detach git from install directory"
+section "6b/9  Detach git from install directory"
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   rm -rf "${INSTALL_DIR}/.git"
   ok "Removed .git — /opt/otp-relay is now deploy-target only, not a git repo"
@@ -245,9 +271,9 @@ else
   ok ".git already absent"
 fi
 
-# ── 6. Configure .env ─────────────────────────────────────────────────────────
+# ── 7. Configure .env ─────────────────────────────────────────────────────────
 
-section "6/8  Environment configuration"
+section "7/9  Environment configuration"
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
   cp "${INSTALL_DIR}/.env.template" "${INSTALL_DIR}/.env"
   warn ".env created from template — leave it as a template for now if you are not ready to start services."
@@ -260,9 +286,9 @@ fi
 # Pick safe install-time hostname/IP even if .env still contains placeholders.
 select_install_server_values
 
-# ── 7. Permissions ────────────────────────────────────────────────────────────
+# ── 8. Permissions ────────────────────────────────────────────────────────────
 
-section "7/8  Permissions"
+section "8/9  Permissions"
 chown -R root:root "${INSTALL_DIR}"
 chmod -R 755 "${INSTALL_DIR}"
 find "${INSTALL_DIR}" -type f -not -path "${INSTALL_DIR}/venv/*" -exec chmod 644 {} \;
@@ -291,9 +317,9 @@ else
 fi
 ok "Permissions set"
 
-# ── 8. TLS certificate + nginx + systemd ─────────────────────────────────────
+# ── 9. TLS certificate + nginx + systemd ─────────────────────────────────────
 
-section "8/8  TLS + nginx + systemd"
+section "9/9  TLS + nginx + systemd"
 
 if [[ ! -f /etc/ssl/otp-relay/server.crt ]]; then
   mkdir -p /etc/ssl/otp-relay
