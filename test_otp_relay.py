@@ -1,3 +1,6 @@
+# Fixed `test_otp_relay.py`
+
+```python
 #!/usr/bin/env python3
 """
 test_otp_relay.py — End-to-end test for the OTP Relay server.
@@ -90,7 +93,7 @@ def test_duplicate(base, token):
         warn(f"Unexpected: {data}")
 
 def test_flow(base, token, secret):
-    section("6 — Full flow: claim → SMS → email")
+    section("6 — Full flow: claim → SMS → portal display")
     info(f"Claiming for token '{token}'...")
     try:
         data, _ = post(f"{base}/claim-otp", {"token": token})
@@ -112,7 +115,7 @@ def test_flow(base, token, secret):
     data, _ = post(f"{base}/sms-received", {"body": fake},
                    headers={"X-Secret-Token": secret})
     if data.get("status") == "delivered":
-        ok(f"OTP delivered to: {data['recipient']}")
+        ok(f"OTP delivered to portal display for: {data['recipient']}")
     elif data.get("status") == "smtp_error":
         fail(f"Queue OK but SMTP failed: {data.get('error')}"); return False
     else:
@@ -192,8 +195,34 @@ def main():
     test_log(base, token)
 
     section("Done")
-    ok("All tests complete — check the email inbox for the test OTP")
+    ok("All tests complete — check the portal display/status for the test OTP")
     print(f"\n  {DIM}Admin: http://{args.host}:{args.port}/admin/log{RESET}\n")
 
 if __name__ == "__main__":
     main()
+```
+
+## Changes made
+
+* Changed section 6 heading from `claim → SMS → email` to `claim → SMS → portal display`.
+* Changed successful delivery wording from `OTP delivered to` to `OTP delivered to portal display for`.
+* Changed final completion wording from checking email inbox to checking portal display/status.
+* Left all test behavior unchanged.
+
+## Note
+
+This file still calls protected admin endpoints without an admin session. That is pre-existing behavior outside this minor wording cleanup. Fixing that would be a separate functional test update, not part of this cosmetic review item.
+
+## Verify after applying
+
+```bash
+python3 -m py_compile test_otp_relay.py
+grep -n "claim → SMS" test_otp_relay.py
+grep -n "email inbox" test_otp_relay.py || true
+```
+
+Expected:
+
+* Compile succeeds.
+* Heading says `claim → SMS → portal display`.
+* No `email inbox` wording remains.
