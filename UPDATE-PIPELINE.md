@@ -14,14 +14,14 @@ This document explains:
 - how each update lane is separated to reduce deployment risk
 - what files trigger each workflow
 - what each deployment script is allowed to change
+- how the Portal UI build converts `frontend/app.jsx` into the generated production artifact `frontend/app.js`
 - how Help Docs and the RTA Wizard guide are generated and deployed
 - how server config updates differ from UI and application code updates
 - how nginx, systemd, and shell-script updates are applied safely
-- what sudo access is required for the server-config workflow
+- what sudo access is required for protected deployment commands
 - how to troubleshoot common deployment failures
 
 ---
-
 
 # 1. Architecture
 
@@ -43,7 +43,8 @@ This split exists so that changes in one area do **not** unintentionally redeplo
 The GitHub repo stores:
 
 - backend runtime files such as `main.py` and `monitor.py`
-- portal UI files such as `frontend/app.jsx`, `frontend/index.html`, `frontend/style.css`, and `frontend/guide.html`
+- portal UI source files such as `frontend/app.jsx`, `frontend/index.html`, `frontend/style.css`, and `frontend/guide.html`
+- frontend build files such as `frontend/package.json` and `frontend/package-lock.json`
 - Help Docs / RTA Wizard guide source files under `docs/help/`
 - server-managed files such as:
   - `install.sh`
@@ -54,12 +55,28 @@ The GitHub repo stores:
 - deployment workflows under `.github/workflows/`
 - deployment scripts under `scripts/`
 
+`frontend/app.jsx` is source code. The Portal UI workflow builds it into the generated production artifact:
+
+```bash
+frontend/app.js
+```
+
+The live portal serves the generated artifact:
+
+```bash
+/opt/otp-relay/frontend/app.js
+```
+
+The live portal should **not** serve `frontend/app.jsx`, and `frontend/app.js` should not be hand-edited.
+
 ## 2.2 Self-hosted runner on the company server
 
 The self-hosted runner:
 
 - checks out the repo into its temporary workspace
 - runs only the workflow triggered by the changed file paths
+- installs frontend build dependencies in the runner workspace when the Portal UI workflow runs
+- builds generated frontend artifacts in the runner workspace
 - applies a narrow deploy script for that update lane
 
 Typical runner workspace:
@@ -171,6 +188,8 @@ frontend/app.jsx
 frontend/index.html
 frontend/style.css
 frontend/guide.html
+frontend/package.json
+frontend/package-lock.json
 scripts/deploy_portal_ui.py
 .github/workflows/deploy-portal-ui.yml
 ```
@@ -183,10 +202,33 @@ scripts/deploy_portal_ui.py
 
 ### What it does
 
-- compares repo UI files against live files in `/opt/otp-relay/frontend`
-- copies only changed UI files
+- checks out the repo in the runner workspace
+- installs frontend dependencies in the runner workspace with `npm ci`
+- builds `frontend/app.jsx` into the production artifact `frontend/app.js`
+- compares allowed UI deploy artifacts against live files in `/opt/otp-relay/frontend`
+- deploys only changed UI artifacts
 - deploys the pop-out RTA Wizard guide page at `/guide.html`
 - does **not** restart backend services
+
+### What it deploys to the live portal
+
+```text
+/opt/otp-relay/frontend/app.js
+/opt/otp-relay/frontend/index.html
+/opt/otp-relay/frontend/style.css
+/opt/otp-relay/frontend/guide.html
+```
+
+### What it does **not** deploy to the live portal
+
+```text
+frontend/app.jsx
+frontend/package.json
+frontend/package-lock.json
+frontend/node_modules/
+```
+
+`frontend/app.jsx` is a repo source file. `frontend/app.js` is generated during the workflow and is the only React application script served by the live portal.
 
 ### Why this split exists
 
@@ -288,7 +330,7 @@ scripts/deploy_server_config.py
 
 ### What makes this lane different
 
-This workflow touches **root-managed server files**, so it requires carefully limited `sudo` access for the GitHub runner user. See [Sudo model](#9-sudo-model-for-server-config-deploy) and [README — server-config sudoers entries](./README.md#7-add-server-config-sudoers-entries).
+This workflow touches **root-managed server files**, so it requires carefully limited `sudo` access for the GitHub runner user. See [Sudo model](#9-sudo-model-for-protected-deploy-commands) and [README — server-config sudoers entries](./README.md#7-add-server-config-sudoers-entries).
 
 ---
 
@@ -422,11 +464,11 @@ This makes Actions logs easier to debug and confirms the exact order of operatio
 <a id="server-config-sudoers"></a>
 <a id="fresh-target-deployment-sequence"></a>
 
-# 9. Sudo model for server-config deploy
+# 9. Sudo model for protected deploy commands
 
 The service account `otprelay` exists to **run** the OTP Relay service, not to manage system infrastructure.
 
-The self-hosted runner user is responsible for deployment automation. For server-config changes, it must have limited `sudo` permission for the exact commands the server-config workflow uses.
+The self-hosted runner user is responsible for deployment automation. It must have limited `sudo` permission for exact protected deployment commands used by the deploy scripts.
 
 ## Recommended sudoers entries
 
@@ -461,6 +503,14 @@ sudo -n /usr/bin/systemctl restart otp-relay.service
 
 not a generic `sudo systemctl ...` or `/bin/systemctl ...`.
 
+For protected file writes, the deploy script should use the exact install command path allowed in sudoers:
+
+```bash
+sudo -n /usr/bin/install -m 0644 <source> <destination>
+```
+
+The workflow should not run the whole deployment script with `sudo` unless a lane explicitly documents that requirement.
+
 ---
 
 # 10. File and command ownership model
@@ -471,7 +521,7 @@ The `install.sh` process creates the `otprelay` system user. That user is intend
 
 ## Runner account
 
-The self-hosted GitHub Actions runner account is responsible for deployment automation. The installer detects this account and gives it ownership only of runner-managed live files.
+The self-hosted GitHub Actions runner account is responsible for deployment automation. The installer detects this account and prepares runner-managed file permissions where appropriate.
 
 Runner-managed live files include:
 
@@ -480,10 +530,12 @@ Runner-managed live files include:
 /opt/otp-relay/monitor.py
 /opt/otp-relay/frontend/index.html
 /opt/otp-relay/frontend/style.css
-/opt/otp-relay/frontend/app.jsx
+/opt/otp-relay/frontend/app.js
 /opt/otp-relay/frontend/guide.html
 /opt/otp-relay/frontend/help/
 ```
+
+`/opt/otp-relay/frontend/app.jsx` is no longer a live UI deploy target. `frontend/app.jsx` remains in the repo as source and is compiled into `frontend/app.js` by the Portal UI workflow.
 
 For permission repair commands when runner ownership needs to be restored, see [HELP-DOCS-DEPLOYMENT.md — Permissions required for runner deployment](./HELP-DOCS-DEPLOYMENT.md#11-permissions-required-for-runner-deployment).
 
@@ -496,7 +548,7 @@ The following areas remain root-managed:
 /etc/nginx/sites-available/
 ```
 
-That is why the server-config deploy must use tightly scoped sudo permissions.
+That is why protected deploy commands must use tightly scoped sudo permissions.
 
 ---
 
@@ -515,16 +567,39 @@ scripts/
 .github/workflows/
 ```
 
+Important frontend source/build files:
+
+```bash
+frontend/app.jsx
+frontend/package.json
+frontend/package-lock.json
+frontend/index.html
+frontend/style.css
+frontend/guide.html
+```
+
 ## Runner workspace
 
 ```bash
 ~/actions-runner/_work/otp-relay/otp-relay/
 ```
 
+The Portal UI workflow builds this generated file in the runner workspace:
+
+```bash
+frontend/app.js
+```
+
 ## Live app
 
 ```bash
 /opt/otp-relay
+```
+
+The live portal serves:
+
+```bash
+/opt/otp-relay/frontend/app.js
 ```
 
 ## Root-managed live config
@@ -546,9 +621,12 @@ scripts/
 
 ## Portal UI workflow
 
-- copies only allowed UI files
+- installs frontend dependencies in the runner workspace with `npm ci`
+- builds `frontend/app.jsx` into production `frontend/app.js`
+- deploys only allowed live UI files
 - deploys `frontend/guide.html`
-- no service restart
+- does not deploy source JSX, package files, or `node_modules/`
+- does not restart backend services
 
 ## Help Docs / RTA Wizard guide workflow
 
@@ -585,7 +663,7 @@ Push to the `portal` branch.
 
 ## Update portal UI
 
-Edit:
+Edit source files such as:
 
 ```bash
 frontend/app.jsx
@@ -594,7 +672,23 @@ frontend/style.css
 frontend/guide.html
 ```
 
+If frontend dependencies or build behavior changes, also edit:
+
+```bash
+frontend/package.json
+frontend/package-lock.json
+```
+
 Push to the `portal` branch.
+
+The self-hosted runner automatically:
+
+1. checks out the updated repo
+2. installs frontend dependencies in `frontend/` with `npm ci`
+3. builds `frontend/app.jsx` into `frontend/app.js`
+4. deploys the generated `frontend/app.js` and allowed static UI files into `/opt/otp-relay/frontend/`
+
+Do not manually edit or commit `frontend/app.js`; it is generated build output.
 
 ## Update Help Docs / RTA Wizard guide content
 
@@ -656,6 +750,20 @@ ls -R ~/actions-runner/_work/otp-relay/otp-relay
 ls -R /opt/otp-relay
 ```
 
+## Check live frontend artifact
+
+```bash
+ls -l /opt/otp-relay/frontend/app.js
+```
+
+## Check that the live portal no longer uses browser Babel or source JSX
+
+```bash
+grep -RIn "text/babel\|babel.min.js\|app.jsx" /opt/otp-relay/frontend/index.html || true
+```
+
+Expected result: no output.
+
 ## Check live systemd units
 
 ```bash
@@ -690,6 +798,45 @@ Check:
 - whether the changed file path actually matches the workflow `paths:` filter
 - whether the correct workflow triggered
 - whether the deployment script found any file differences
+
+## Problem: Portal UI workflow fails during `npm ci`
+
+Cause:
+
+- `frontend/package-lock.json` is missing
+- `frontend/package-lock.json` does not match `frontend/package.json`
+- the workflow checkout does not include the lock file
+
+Fix:
+
+- run `npm install` inside `frontend/` from a normal repo clone
+- commit both `frontend/package.json` and `frontend/package-lock.json`
+- do not commit `frontend/node_modules/`
+
+Verify:
+
+```bash
+git ls-files frontend/package-lock.json
+```
+
+Expected output:
+
+```text
+frontend/package-lock.json
+```
+
+## Problem: Portal UI workflow builds successfully but `/opt/otp-relay/frontend/app.js` is not updated
+
+Check:
+
+- the workflow ran `npm run build` successfully
+- `frontend/app.js` exists in the runner workspace after the build step
+- `scripts/deploy_portal_ui.py` allows `frontend/app.js`
+- the deploy script uses the documented protected install command if the live target is not directly writable:
+
+```bash
+sudo -n /usr/bin/install -m 0644 <source> <destination>
+```
 
 ## Problem: workflow cannot write to `/opt/otp-relay/main.py`
 
@@ -750,7 +897,7 @@ Cause:
 
 Fix:
 
-- add exact sudoers entries for the exact command paths used by the script — see [Section 9](#9-sudo-model-for-server-config-deploy)
+- add exact sudoers entries for the exact command paths used by the script — see [Section 9](#9-sudo-model-for-protected-deploy-commands)
 
 ## Problem: `systemctl` restart works manually but fails in Actions
 
@@ -827,6 +974,8 @@ curl -s -o /dev/null -w "asset=%{http_code}\n" http://127.0.0.1:8000/help/assets
 - Runner workspace is temporary build space.
 - `/opt/otp-relay` is the live application path.
 - `/opt/otp-relay` should not be treated as a git working copy after install.
+- `frontend/app.jsx` is source code and should be edited in the repo.
+- `frontend/app.js` is generated build output and should be deployed by the Portal UI workflow.
 - `/etc/systemd/system/` and `/etc/nginx/sites-available/` are root-managed targets.
 - Use separate workflows for app code, UI, docs, and server config.
 - Do not use a broad full update process for routine incremental changes.
@@ -840,12 +989,14 @@ curl -s -o /dev/null -w "asset=%{http_code}\n" http://127.0.0.1:8000/help/assets
 This project supports a safer multi-lane update pipeline:
 
 - **Application code deploy** for Python runtime files
-- **Portal UI deploy** for frontend files, including the pop-out guide page
+- **Portal UI deploy** for frontend source/build changes, including compiling `frontend/app.jsx` into production `frontend/app.js` and deploying the pop-out guide page
 - **Help Docs / RTA Wizard guide deploy** for markdown guide content, screenshots, and generated wizard-guide JSON — see [HELP-DOCS-DEPLOYMENT.md](./HELP-DOCS-DEPLOYMENT.md)
-- **Server config deploy** for shell scripts, systemd units, and nginx template updates — sudo requirements in [Section 9](#9-sudo-model-for-server-config-deploy)
+- **Server config deploy** for shell scripts, systemd units, and nginx template updates — sudo requirements in [Section 9](#9-sudo-model-for-protected-deploy-commands)
 
 The core principle is simple:
 
 **Edit in GitHub → matching workflow runs on the company-server self-hosted runner → only the intended part of the system is updated.**
+
+For portal UI, maintainers edit `frontend/app.jsx` and related source/build files. The self-hosted runner handles `npm ci`, builds `frontend/app.js`, and deploys only the generated artifact plus allowed static UI files.
 
 For Help Docs and RTA Wizard guide content, maintainers edit only `docs/help/*.md` and `docs/help/assets/`. The self-hosted runner handles the build and live sync automatically.
