@@ -1,6 +1,3 @@
-# Fixed `update.sh`
-
-```bash
 #!/usr/bin/env bash
 # =============================================================================
 # update.sh — Pull latest code from git and restart the services
@@ -38,9 +35,9 @@ PORTAL_URL="https://${SERVER_HOSTNAME}"
 echo -e "\n${BOLD}OTP Relay — Update${RESET}\n"
 
 # ── 1. Pull latest code ───────────────────────────────────────────────────────
-info "Pulling latest code..."
-git fetch origin main
-git reset --hard origin/main
+info "Pulling latest portal branch..."
+git fetch origin portal
+git reset --hard origin/portal
 ok "Code updated"
 
 # ── 2. Python packages ────────────────────────────────────────────────────────
@@ -48,14 +45,40 @@ info "Updating Python packages..."
 "$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv bcrypt markdown pyyaml
 ok "Packages updated"
 
-# ── 3. Permissions ────────────────────────────────────────────────────────────
+# ── 3. Build Portal UI ────────────────────────────────────────────────────────
+info "Building Portal UI..."
+if [[ ! -f "$INSTALL_DIR/frontend/package.json" ]]; then
+  fail "frontend/package.json is missing — cannot build frontend/app.js"
+  exit 1
+fi
+
+if [[ ! -f "$INSTALL_DIR/frontend/package-lock.json" ]]; then
+  fail "frontend/package-lock.json is missing — run npm install in frontend/ and commit the lockfile"
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  fail "npm is required to build frontend/app.js — run install.sh first"
+  exit 1
+fi
+
+(
+  cd "$INSTALL_DIR/frontend"
+  npm ci --silent
+  npm run build --silent
+  test -s app.js
+  rm -rf node_modules
+)
+ok "Portal UI built: frontend/app.js"
+
+# ── 4. Permissions ────────────────────────────────────────────────────────────
 chmod +x "$INSTALL_DIR/deploy_users.sh"    2>/dev/null || true
 chmod +x "$INSTALL_DIR/test_otp_relay.py"  2>/dev/null || true
 chmod +x "$INSTALL_DIR/install.sh"         2>/dev/null || true
 chmod +x "$INSTALL_DIR/update.sh"          2>/dev/null || true
 chmod +x "$INSTALL_DIR/monitor.py"         2>/dev/null || true
 
-# ── 4. Sync systemd units ─────────────────────────────────────────────────────
+# ── 5. Sync systemd units ─────────────────────────────────────────────────────
 # Copy any updated unit files and reload systemd so changes take effect.
 # A daemon-reload is safe to run at any time — it does not restart services.
 UNITS_CHANGED=false
@@ -76,7 +99,7 @@ else
   ok "systemd units unchanged"
 fi
 
-# ── 5. Restart services ───────────────────────────────────────────────────────
+# ── 6. Restart services ───────────────────────────────────────────────────────
 if $RESTART; then
   info "Restarting services..."
 
@@ -105,21 +128,3 @@ fi
 echo ""
 ok "Update complete"
 echo -e "  ${DIM}Portal: ${PORTAL_URL}${RESET}\n"
-```
-
-## Changes made
-
-* Removed unused `requests` package from the pip upgrade command.
-* Replaced hardcoded portal output URL with `SERVER_HOSTNAME` read from `.env`.
-* Added fallback to detected hostname if `.env` does not contain `SERVER_HOSTNAME`.
-* Left all unrelated update behavior unchanged.
-
-## Verify after applying
-
-```bash
-bash -n update.sh
-grep -n "requests" update.sh || true
-grep -n "srvotp26.init-db.lan" update.sh || true
-```
-
-Expected: no output from both `grep` commands.
