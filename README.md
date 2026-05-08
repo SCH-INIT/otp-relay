@@ -55,6 +55,14 @@ See [UPDATE-PIPELINE.md](./UPDATE-PIPELINE.md) for deployment flow, workflow tri
 
 See [HELP-DOCS-DEPLOYMENT.md](./HELP-DOCS-DEPLOYMENT.md) for the Help Docs and RTA Wizard guide build flow, wizard block syntax, screenshot rules, and permission repair.
 
+## Frontend build model
+
+`frontend/app.jsx` is source code. The Portal UI workflow runs `npm ci` and `npm run build` in `frontend/`, generating the production artifact `frontend/app.js`.
+
+The live portal serves `app.js`; it does **not** serve `app.jsx` and does **not** run Babel in the browser.
+
+Do not manually edit or commit `frontend/app.js`; it is generated build output and is ignored by git.
+
 ## Repository Structure
 
 ```
@@ -75,9 +83,12 @@ otp-relay/
 ├── UPDATE-PIPELINE.md
 ├── HELP-DOCS-DEPLOYMENT.md
 ├── frontend/
-│   ├── index.html                 # Portal shell
+│   ├── index.html                 # Portal shell; loads generated app.js
 │   ├── style.css                  # App styles
-│   ├── app.jsx                    # React UI logic for OTP, Wizard, floating guide, and Admin views
+│   ├── app.jsx                    # React UI source for OTP, Wizard, floating guide, and Admin views
+│   ├── package.json               # Frontend build dependencies/scripts
+│   ├── package-lock.json          # Locked frontend dependency tree for npm ci
+│   ├── app.js                     # Generated production artifact; built by workflow, ignored by git
 │   ├── guide.html                 # Pop-out RTA Wizard guide page
 │   └── help/                      # Generated Help Docs output
 ├── nginx/
@@ -95,7 +106,7 @@ otp-relay/
     └── otp-monitor.service        # Monitor systemd unit
 ```
 
-> `.env`, `venv/`, and `data/` are intentionally excluded from git.
+> `.env`, `venv/`, `data/`, `frontend/node_modules/`, and generated `frontend/app.js` are intentionally excluded from git.
 
 ---
 
@@ -137,7 +148,7 @@ otp-relay/
 ├── frontend/
 │   ├── index.html               <runner-user>:<runner-user> 644 (runner-managed)
 │   ├── style.css                <runner-user>:<runner-user> 644 (runner-managed)
-│   ├── app.jsx                  <runner-user>:<runner-user> 644 (runner-managed)
+│   ├── app.js                   <runner-user>:<runner-user> 644 (runner-managed generated artifact)
 │   ├── guide.html               <runner-user>:<runner-user> 644 (runner-managed)
 │   └── help/                    <runner-user>:<runner-user> 755 (generated Help Docs output)
 ├── nginx/
@@ -152,6 +163,8 @@ otp-relay/
     ├── wizard_progress.json     otprelay:otprelay           600
     └── admin_auth.json          otprelay:otprelay           600
 ```
+
+`/opt/otp-relay/frontend/app.jsx` is not a live deploy target. `frontend/app.jsx` remains in the repo as source and is compiled into `frontend/app.js` by the Portal UI workflow.
 
 ---
 
@@ -256,11 +269,11 @@ sudo bash /opt/otp-relay/deploy_users.sh
 
 ### 7. Add server-config sudoers entries
 
-Application code, portal UI, and Help Docs deploy through runner-managed file ownership.
+Application code, portal UI, and Help Docs deploy through runner-managed file ownership or the documented protected install command.
 
 Server-config deployment touches nginx/systemd targets and requires specific passwordless sudo entries for the runner user.
 
-See [UPDATE-PIPELINE.md — Sudo model for server-config deploy](./UPDATE-PIPELINE.md#server-config-sudoers) for the required sudoers entries.
+See [UPDATE-PIPELINE.md — Sudo model for protected deploy commands](./UPDATE-PIPELINE.md#server-config-sudoers) for the required sudoers entries.
 
 ### 8. Verify the portal
 
@@ -268,7 +281,7 @@ See [UPDATE-PIPELINE.md — Sudo model for server-config deploy](./UPDATE-PIPELI
 
 ```bash
 curl -sk -o /dev/null -w "root=%{http_code}\n" https://127.0.0.1/
-curl -sk -o /dev/null -w "app=%{http_code}\n" https://127.0.0.1/app.jsx
+curl -sk -o /dev/null -w "app=%{http_code}\n" https://127.0.0.1/app.js
 curl -sk -o /dev/null -w "css=%{http_code}\n" https://127.0.0.1/style.css
 curl -sk -o /dev/null -w "guide=%{http_code}\n" https://127.0.0.1/guide.html
 curl -sk -o /dev/null -w "wizard=%{http_code}\n" https://127.0.0.1/help/wizard-guide.json
@@ -283,6 +296,14 @@ css=200
 guide=200
 wizard=200
 ```
+
+Also verify that the live portal shell does not load browser Babel or source JSX:
+
+```bash
+grep -RIn "text/babel\|babel.min.js\|app.jsx" /opt/otp-relay/frontend/index.html || true
+```
+
+Expected result: no output.
 
 Normal update flow after this point:
 
