@@ -536,7 +536,7 @@ function App() {
   const [openStep, setOpenStep] = useState(null);
   const [faqOpen, setFaqOpen] = useState({});
   const [otp, setOtp] = useState({ panel: 'claim', message: '', position: 1, waitEstimate: 0, queueDepth: 0, otpValue: '———', activeRemaining: CONFIG.CLAIM_EXPIRY_SEC, otpRemaining: CONFIG.OTP_DISPLAY_SEC, token: '' });
-  const [admin, setAdmin] = useState({ session: sessionStorage.getItem('adminSession') || '', configured: false, mode: 'login', error: '', credential: '', current: '', confirm: '', data: null, loading: false, configTokens: 'JPR, AMD, SCH' });
+  const [admin, setAdmin] = useState({ session: '', configured: false, mode: 'login', error: '', credential: '', current: '', confirm: '', data: null, loading: false, configTokens: 'JPR, AMD, SCH' });
 
   useEffect(() => {
     API.adminAuthStatus().then(d => setAdmin(s => ({ ...s, configured: !!d.configured, mode: d.configured ? 'login' : 'setup' }))).catch(() => {});
@@ -724,12 +724,10 @@ function App() {
       if (admin.mode === 'setup') {
         if (!admin.credential || admin.credential !== admin.confirm) throw new Error('Credentials do not match');
         const data = await API.adminAuthSetup(admin.credential, admin.current || undefined);
-        sessionStorage.setItem('adminSession', data.session);
         setAdmin(s => ({ ...s, session: data.session, loading: false, configured: true, mode: 'login', credential: '', current: '', confirm: '' }));
         await loadAdminData(data.session);
       } else {
         const data = await API.adminAuthLogin(admin.credential);
-        sessionStorage.setItem('adminSession', data.session);
         setAdmin(s => ({ ...s, session: data.session, loading: false, credential: '' }));
         await loadAdminData(data.session);
       }
@@ -797,7 +795,6 @@ function App() {
 
   async function logoutAdmin() {
     try { await API.adminAuthLogout(admin.session); } catch {}
-    sessionStorage.removeItem('adminSession');
     setAdmin(s => ({ ...s, session: '', data: null }));
   }
 
