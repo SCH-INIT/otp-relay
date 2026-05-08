@@ -1,3 +1,6 @@
+# Fixed `update.sh`
+
+```bash
 #!/usr/bin/env bash
 # =============================================================================
 # update.sh — Pull latest code from git and restart the services
@@ -25,6 +28,13 @@ RESTART=true
 INSTALL_DIR="/opt/otp-relay"
 cd "$INSTALL_DIR"
 
+SERVER_HOSTNAME=""
+if [[ -f "$INSTALL_DIR/.env" ]]; then
+  SERVER_HOSTNAME="$(grep -E '^SERVER_HOSTNAME=' "$INSTALL_DIR/.env" | tail -n 1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//;s/^'\''//;s/'\''$//' || true)"
+fi
+[[ -n "$SERVER_HOSTNAME" ]] || SERVER_HOSTNAME="$(hostname -f 2>/dev/null || hostname -s 2>/dev/null || echo localhost)"
+PORTAL_URL="https://${SERVER_HOSTNAME}"
+
 echo -e "\n${BOLD}OTP Relay — Update${RESET}\n"
 
 # ── 1. Pull latest code ───────────────────────────────────────────────────────
@@ -35,7 +45,7 @@ ok "Code updated"
 
 # ── 2. Python packages ────────────────────────────────────────────────────────
 info "Updating Python packages..."
-"$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv requests bcrypt markdown pyyaml
+"$INSTALL_DIR/venv/bin/pip" install -q --upgrade fastapi uvicorn openpyxl python-dotenv bcrypt markdown pyyaml
 ok "Packages updated"
 
 # ── 3. Permissions ────────────────────────────────────────────────────────────
@@ -94,4 +104,22 @@ fi
 
 echo ""
 ok "Update complete"
-echo -e "  ${DIM}Portal: https://srvotp26.init-db.lan${RESET}\n"
+echo -e "  ${DIM}Portal: ${PORTAL_URL}${RESET}\n"
+```
+
+## Changes made
+
+* Removed unused `requests` package from the pip upgrade command.
+* Replaced hardcoded portal output URL with `SERVER_HOSTNAME` read from `.env`.
+* Added fallback to detected hostname if `.env` does not contain `SERVER_HOSTNAME`.
+* Left all unrelated update behavior unchanged.
+
+## Verify after applying
+
+```bash
+bash -n update.sh
+grep -n "requests" update.sh || true
+grep -n "srvotp26.init-db.lan" update.sh || true
+```
+
+Expected: no output from both `grep` commands.
