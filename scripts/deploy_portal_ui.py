@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,11 +30,26 @@ def files_differ(src: Path, dst: Path) -> bool:
     return sha256_file(src) != sha256_file(dst)
 
 
+def install_file(src: Path, dst: Path) -> None:
+    subprocess.run(
+        [
+            "sudo",
+            "-n",
+            "/usr/bin/install",
+            "-m",
+            "0644",
+            str(src),
+            str(dst),
+        ],
+        check=True,
+    )
+
+
 def copy_if_changed(src: Path, dst: Path) -> bool:
-    dst.parent.mkdir(parents=True, exist_ok=True)
     if not files_differ(src, dst):
         return False
-    shutil.copy2(src, dst)
+
+    install_file(src, dst)
     return True
 
 
