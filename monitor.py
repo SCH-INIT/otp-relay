@@ -1,6 +1,3 @@
-# Fixed `monitor.py`
-
-```python
 # OTP Relay Monitor — monitor.py
 # Runs as a separate systemd service (otp-monitor).
 # Two parallel tasks:
@@ -283,25 +280,20 @@ if __name__ == "__main__":
 
     # Log tailer runs in the main thread (blocks forever)
     tail_audit_log()
-```
 
 ## Change made
 
 Only this reviewed minor issue was changed:
 
-```python
 audit("phone_online",
       f"iPhone {PHONE_IP} is reachable again",
       "error")
-```
 
 to:
 
-```python
 audit("phone_online",
       f"iPhone {PHONE_IP} is reachable again",
       "info")
-```
 
 ## Why
 
@@ -309,15 +301,11 @@ audit("phone_online",
 
 ## Verify after applying
 
-```bash
 python3 -m py_compile monitor.py
 grep -n -A3 -B2 'phone_online' monitor.py
-```
 
 Expected:
 
-```python
 audit("phone_online",
       f"iPhone {PHONE_IP} is reachable again",
       "info")
-```
