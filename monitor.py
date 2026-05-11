@@ -4,14 +4,14 @@
 #   1. Phone watcher  — uses ARP checks for iPhone presence and writes
 #                       phone_online / phone_offline events to the audit log
 #   2. Alert forwarder — tails the audit log in real time and forwards
-#                        entries at or above ALERT_LEVEL to WhatsApp
-#                        via CallMeBot API.
+#                        entries at or above ALERT_LEVEL to Telegram
+#                        via Bot API.
 #
 # All events — including phone_* — flow through the same alert filter,
 # so ALERT_LEVEL controls everything uniformly.
 #
 # Message batching: events that arrive within BATCH_WINDOW_SEC are grouped
-# into one WhatsApp message to avoid flooding.
+# into one Telegram message to avoid flooding.
 
 import json
 import logging
@@ -43,8 +43,8 @@ AUDIT_LOG_PATH = str(
     )
 )
 
-WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY", "")
-WHATSAPP_RECIPIENT = os.getenv("WHATSAPP_RECIPIENT", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 ALERT_LEVEL = os.getenv("ALERT_LEVEL", "error").lower()
 PHONE_IP = os.getenv("PHONE_IP", "")
 PHONE_INTERFACE = os.getenv("PHONE_INTERFACE", "ens33")
@@ -93,23 +93,24 @@ def audit(event: str, detail: str = "", status: str = "info"):
     logger.log(level, f"[{event}] {detail}")
 
 
-# ── WhatsApp via CallMeBot ────────────────────────────────────────────────────
-def send_whatsapp(message: str):
-    if not WHATSAPP_API_KEY or not WHATSAPP_RECIPIENT:
-        logger.warning("WhatsApp not configured — skipping alert")
+# ── Telegram Bot API ──────────────────────────────────────────────────────────
+def send_telegram(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("Telegram not configured — skipping alert")
         return
     try:
-        params = urllib.parse.urlencode({
-            "phone": WHATSAPP_RECIPIENT,
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "apikey": WHATSAPP_API_KEY,
-        })
-        url = f"https://api.callmebot.com/whatsapp.php?{params}"
-        with urllib.request.urlopen(url, timeout=15) as response:
+            "parse_mode": "Markdown",
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as response:
             body = response.read().decode(errors="replace")
-            logger.info(f"WhatsApp sent — response: {body[:80]}")
+            logger.info(f"Telegram sent — response: {body[:80]}")
     except Exception as e:
-        logger.error(f"WhatsApp delivery failed: {e}")
+        logger.error(f"Telegram delivery failed: {e}")
 
 
 # ── Batching dispatcher ───────────────────────────────────────────────────────
@@ -154,7 +155,7 @@ def _flush_batch():
             + f"\n\n🔗 {PORTAL_URL}/admin/log"
         )
 
-    send_whatsapp(msg)
+    send_telegram(msg)
 
 
 def dispatch(entry: dict):
@@ -213,7 +214,7 @@ def ping(ip: str) -> bool:
     """Use ARP instead of ICMP ping for iPhone presence detection."""
     try:
         result = subprocess.run(
-            ["arping", "-c", "2", "-w", "1", "-I", PHONE_INTERFACE, ip],
+            ["arping", "-c", "2", "-w", "3", "-I", PHONE_INTERFACE, ip],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,

@@ -1,10 +1,8 @@
 # OTP Relay Server - main.py
-# Stack: FastAPI + Python 3.12 + Exchange SMTP (internal only)
+# Stack: FastAPI + Python 3.12
 # No external APIs. Runs entirely on your company LAN.
 #
-# Delivery model: OTP is displayed on-screen via polling. Email is NOT used
-# for OTP delivery. SMTP config and /admin/smtp-test are retained for
-# diagnostics only.
+# Delivery model: OTP is displayed on-screen via polling.
 
 import asyncio
 import json
@@ -12,11 +10,8 @@ import logging
 import os
 import re
 import secrets
-import smtplib
 from collections import deque
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 from io import BytesIO
 from typing import Any, Dict, List, Optional
@@ -53,14 +48,6 @@ app.add_middleware(
 # -- Config -------------------------------------------------------------------
 SMS_SECRET_TOKEN = os.getenv("SMS_SECRET_TOKEN", "changeme")
 
-SMTP_HOST = os.getenv("SMTP_HOST", "mail.company.local")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "otp-relay@company.com")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-SMTP_AUTH = os.getenv("SMTP_AUTH", "true").lower() == "true"
-FROM_EMAIL = os.getenv("FROM_EMAIL", SMTP_USER)
-FROM_NAME = os.getenv("FROM_NAME", "OTP Relay")
 
 # How long the active user has to trigger their OTP before being evicted.
 # Other users wait until this window expires or OTP is delivered.
@@ -347,29 +334,6 @@ def extract_otp(text: str) -> str:
     return match.group() if match else "-"
 
 
-# -- Email diagnostics ---------------------------------------------------------
-def send_email(to_email: str, name: str, subject: str, html: str) -> None:
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
-    msg["To"] = to_email
-    msg.attach(MIMEText(html, "html"))
-
-    if SMTP_USE_TLS:
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
-        server.ehlo()
-        server.starttls()
-    else:
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
-
-    try:
-        if SMTP_AUTH:
-            server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(FROM_EMAIL, to_email, msg.as_string())
-    finally:
-        server.quit()
-
-
 # -- Background task -----------------------------------------------------------
 async def background_purge() -> None:
     """Runs every 15 seconds to expire stale queue entries and OTP display windows."""
@@ -651,19 +615,6 @@ async def reload_users(x_admin_session: Optional[str] = Header(default=None)):
     count = load_users_from_excel(USERS_EXCEL_PATH, replace_existing=True)
     audit("users_reloaded", detail=f"{count} users loaded")
     return {"status": "ok", "users_loaded": count}
-
-
-@app.get("/admin/smtp-test")
-async def smtp_test():
-    """Sends a test email to the relay account - use to verify Exchange connectivity."""
-    html = """<div style="font-family:Arial,sans-serif;padding:24px">
-      <p>OTP Relay SMTP test - if you can read this, Exchange is working.</p>
-    </div>"""
-    try:
-        send_email(FROM_EMAIL, "OTP Relay", "OTP Relay - SMTP connectivity test", html)
-        return {"status": "ok", "sent_to": FROM_EMAIL}
-    except Exception as exc:
-        return {"status": "error", "error": str(exc)}
 
 
 # -- Wizard/admin server-backed endpoints -------------------------------------

@@ -5,12 +5,14 @@ metadata:
   namespace: otp-relay
   labels:
     app: otp-relay
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: "172.31.10.83"
 spec:
   type: LoadBalancer
   selector:
     app: otp-relay
   ports:
     - name: http
+      protocol: TCP
       port: 80
       targetPort: 8000
-      protocol: TCP

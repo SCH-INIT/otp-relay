@@ -13,7 +13,9 @@ RUN python -m venv /build/venv && \
         fastapi \
         uvicorn \
         openpyxl \
-        python-dotenv
+        python-dotenv \
+		bcrypt \
+		python-multipart
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime

@@ -4,21 +4,16 @@ metadata:
   name: otp-relay-config
   namespace: otp-relay
 data:
-  # ── App ───────────────────────────────────────────────────────────────────
-  CLAIM_EXPIRY_SEC: "90"
-  OTP_DISPLAY_SEC: "285"
-  CONCURRENT_RISK_SEC: "30"
-  USERS_EXCEL_PATH: "data/users.xlsx"
-  AUDIT_LOG_PATH: "data/audit.log"
-
-  # ── Portal ──────────────────────────────────────────────────────────
-  ADMIN_TOKENS: "JPR,AMD,SCH"
-
-  # ── Monitor ───────────────────────────────────────────────────────────────
-  PHONE_IP: "172.31.10.161"
-  PHONE_INTERFACE: "eth0"
-  PHONE_PING_INTERVAL: "150"
-  PHONE_OFFLINE_THRESHOLD: "2"
-  BATCH_WINDOW_SEC: "10"
+  ADMIN_TOKENS: "JPR,AMD,SCH,PSI"
   ALERT_LEVEL: "error"
-  SERVER_HOSTNAME: "srvk3s01.init-db.lan"
+  AUDIT_LOG_PATH: "data/audit.log"
+  BATCH_WINDOW_SEC: "10"
+  CLAIM_EXPIRY_SEC: "90"
+  CONCURRENT_RISK_SEC: "30"
+  OTP_DISPLAY_SEC: "285"
+  PHONE_INTERFACE: "ens33"
+  PHONE_IP: "172.31.10.161"
+  PHONE_OFFLINE_THRESHOLD: "2"
+  PHONE_PING_INTERVAL: "150"
+  SERVER_HOSTNAME: "srvk3mst01.local"
+  USERS_EXCEL_PATH: "data/users.xlsx"
