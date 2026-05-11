@@ -103,7 +103,6 @@ def send_telegram(message: str):
         data = urllib.parse.urlencode({
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "Markdown",
         }).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -133,7 +132,7 @@ def _flush_batch():
         e = entries[0]
         icon = "🔴" if e.get("status") == "error" else "🟡"
         msg = (
-            f"{icon} *OTP Relay Alert*\n"
+            f"{icon} OTP Relay Alert\n"
             f"[{e.get('status', 'info')}] {e.get('event', '')}"
             + (f" | {e.get('token')}" if e.get("token") else "")
             + (f"\n{e.get('detail')}" if e.get("detail") else "")
@@ -150,7 +149,7 @@ def _flush_batch():
                 line += f"\n   {e.get('detail')}"
             lines.append(line)
         msg = (
-            f"⚠️ *OTP Relay — {len(entries)} alerts*\n\n"
+            f"⚠️ OTP Relay — {len(entries)} alerts\n\n"
             + "\n\n".join(lines)
             + f"\n\n🔗 {PORTAL_URL}/admin/log"
         )
