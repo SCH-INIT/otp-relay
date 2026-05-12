@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: otp-relay-https
+  namespace: otp-relay
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`srvotp26.init-db.lan`)
+      kind: Rule
+      services:
+        - name: otp-relay
+          port: 80
+  tls:
+    secretName: otp-relay-tls

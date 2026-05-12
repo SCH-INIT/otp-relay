@@ -15,5 +15,5 @@ data:
   PHONE_IP: "172.31.10.161"
   PHONE_OFFLINE_THRESHOLD: "2"
   PHONE_PING_INTERVAL: "150"
-  SERVER_HOSTNAME: "srvk3mst01.local"
+  SERVER_HOSTNAME: "srvotp26.init-db.lan"
   USERS_EXCEL_PATH: "data/users.xlsx"

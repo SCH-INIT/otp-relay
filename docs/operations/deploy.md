@@ -138,7 +138,42 @@ Save the session token from the response, then reload users:
 Verify: `curl http://172.31.10.83/readyz` should show a non-zero user count.
 
 
-## 10. Configure iOS Shortcut
+## 10. Set up TLS for browser access
+
+Generate a self-signed certificate covering the DNS hostname:
+
+    openssl req -x509 -nodes -days 3650 \
+      -newkey rsa:2048 \
+      -keyout /tmp/otp-tls.key \
+      -out /tmp/otp-tls.crt \
+      -subj "/CN=srvotp26.init-db.lan" \
+      -addext "subjectAltName=DNS:srvotp26.init-db.lan"
+
+Create the TLS secret:
+
+    kubectl create secret tls otp-relay-tls \
+      --namespace=otp-relay \
+      --cert=/tmp/otp-tls.crt \
+      --key=/tmp/otp-tls.key \
+      --dry-run=client -o yaml | kubectl apply -f -
+
+    rm /tmp/otp-tls.key /tmp/otp-tls.crt
+
+Apply the Traefik IngressRoute:
+
+    kubectl apply -f ~/k8s/ingress.yaml
+
+Verify:
+
+    kubectl get ingressroute -n otp-relay
+    curl -k https://srvotp26.init-db.lan/readyz
+
+DNS for `srvotp26.init-db.lan` must point to `172.31.10.84` (Traefik's MetalLB IP),
+not to the direct service IP `.83`. The iPhone uses `.83` over HTTP and does not
+go through Traefik.
+
+
+## 11. Configure iOS Shortcut
 
 Update the Shortcut on the shared iPhone with:
 
@@ -181,3 +216,12 @@ The arping timeout (`-w 3`) must be long enough for two probes and responses.
 
 **Telegram alerts not arriving**: Test the bot token and chat ID manually:
 `curl "https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<ID>&text=test"`
+
+**HTTPS not working / 502 from nginx**: DNS for `srvotp26.init-db.lan` may still
+point to the old VM. Verify with `nslookup srvotp26.init-db.lan` and ensure only
+`172.31.10.84` is returned. Test bypassing DNS:
+`curl -k --resolve srvotp26.init-db.lan:443:172.31.10.84 https://srvotp26.init-db.lan/readyz`
+
+**Browser shows certificate warning**: Expected with a self-signed cert. Users must
+accept the warning once. For iOS Shortcuts, the device needs a reboot after trusting
+a new cert (Shortcuts background context does not pick up cert trust changes until reboot).
