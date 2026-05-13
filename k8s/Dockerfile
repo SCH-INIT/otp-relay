@@ -1,10 +1,18 @@
-# ── Stage 1: build ────────────────────────────────────────────────────────────
-# Install dependencies in a separate stage so they don't need to be rebuilt
-# every time application code changes.
+# ── Stage 1: frontend build ───────────────────────────────────────────────────
+# Transpile JSX to JS and minify. Node is only needed at build time.
+FROM node:20-slim AS frontend
+WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY frontend/ ./frontend/
+RUN npx babel frontend/app.jsx --presets @babel/preset-react --out-file frontend/app.js && \
+    rm frontend/app.jsx
+# ── Stage 2: Python build ────────────────────────────────────────────────────
+# Install Python dependencies and build help docs.
 FROM python:3.12-slim AS builder
 WORKDIR /build
 COPY main.py .
-COPY frontend/ ./frontend/
+COPY --from=frontend /build/frontend/ ./frontend/
 COPY docs/help/ ./docs/help/
 COPY scripts/build_help_docs.py ./scripts/build_help_docs.py
 RUN python -m venv /build/venv && \
@@ -18,10 +26,9 @@ RUN python -m venv /build/venv && \
         markdown \
         pyyaml
 # Build help docs: converts docs/help/*.md into frontend/help/wizard-guide.json
-# and frontend/help/rendered/*.html. Must run before the runtime stage copies
-# frontend/ into the final image.
+# and frontend/help/rendered/*.html.
 RUN /build/venv/bin/python scripts/build_help_docs.py
-# ── Stage 2: runtime ──────────────────────────────────────────────────────────
+# ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 # Create a non-root user — the container should not run as root
 RUN useradd --system --uid 999 --no-create-home --shell /usr/sbin/nologin otprelay

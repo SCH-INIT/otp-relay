@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "build:frontend": "babel frontend/app.jsx --presets @babel/preset-react --out-file frontend/app.js"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.24.0",
+    "@babel/core": "^7.24.0",
+    "@babel/preset-react": "^7.24.0",
+  }
+}
