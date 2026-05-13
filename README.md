@@ -58,7 +58,7 @@ otp-relay/ (k8s branch)
 │   │   └── dockerfile.md            # Dockerfile design decisions
 │   ├── operations/
 │   │   ├── build-guide.md           # Image build and deploy workflow
-│   │   ├── setup-app.md             # Beginner ops guide (for Jathin)
+│   │   ├── setup-guide.md           # Beginner ops guide (for Jathin)
 │   │   └── github-actions-deploy.md # CI/CD setup and operations
 │   └── help/
 │       ├── assets/                  # Screenshots for help pages
@@ -100,7 +100,7 @@ Both the app and monitor pods are pinned to the same worker node via `nodeSelect
 
 ## Quick start
 
-Full setup instructions are in `docs/operations/setup-app.md`. The short version:
+Full setup instructions are in `docs/operations/setup-guide.md`. The short version:
 
 ```bash
 # Label the storage node
@@ -183,7 +183,7 @@ kubectl describe pod -n otp-relay <pod-name>                  # diagnostics
 |---|---|
 | `docs/k8s-plan.md` | Architecture plan, phased roadmap, design rationale |
 | `docs/dev/dockerfile.md` | Every decision in the Dockerfile, explained |
-| `docs/operations/setup-app.md` | Step-by-step first deploy guide (beginner level) |
+| `docs/operations/setup-guide.md` | Step-by-step first deploy guide (beginner level) |
 | `docs/operations/build-guide.md` | Image build and deployment workflows |
 | `docs/operations/github-actions-deploy.md` | CI/CD setup with self-hosted runner |
 

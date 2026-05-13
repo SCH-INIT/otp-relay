@@ -2,7 +2,17 @@
 
 **For:** Jathin
 **Level:** Beginner — every command is explained
-**Server:** `srvk3s01.init-db.lan` — `172.31.9.10`
+**Cluster:** K3s, three nodes on the company LAN
+
+| Role | Hostname | Notes |
+|---|---|---|
+| Master | `srvk3mst01.local` | Run `kubectl` here |
+| Worker | `srvk3wrk01.local` | Labelled as the storage node; runs the app and monitor pods |
+| Worker | `srvk3wrk02.local` | Available for other workloads |
+
+The `.local` hostnames are only resolvable inside the cluster network. The
+public-facing service is reached through `srvotp26.init-db.lan`, which is a
+MetalLB IP advertised on the company LAN.
 
 This guide walks you through deploying the OTP Relay application on your K3s
 cluster, and operating it day to day. No prior Kubernetes experience assumed.
@@ -45,9 +55,9 @@ in the `otp-relay` namespace.
 
 Before following this guide, you need:
 
-- [ ] K3s installed and running on `srvk3s01.init-db.lan`
+- [ ] K3s installed and running across the three nodes (one master, two workers)
 - [ ] MetalLB installed and configured with a LAN IP range
-- [ ] `kubectl` available on the server (K3s includes this automatically)
+- [ ] `kubectl` available on the master node (K3s includes this automatically)
 - [ ] The repo cloned on the server — or at minimum the `k8s/manifests/`
       folder copied across
 - [ ] The `secret.env` file created with the real token value (Christian
@@ -156,14 +166,16 @@ kubectl get secret otp-relay-secrets -n otp-relay
 ### 1.5 — label the storage node
 
 Both the app and the monitor share a volume (PVC) that can only be mounted on
-one node at a time. Pick a worker node and label it so both pods land there:
+one node at a time. We label one worker node so both pods always land on it:
 
 ```bash
 kubectl label node srvk3wrk01 otp-relay/storage=true
 ```
 
-Replace `srvk3wrk01` with whichever worker node you want to use. You can check
-your node names with `kubectl get nodes`.
+`srvk3wrk01` is the chosen storage node in this cluster. If you ever need to
+change which worker hosts the OTP Relay pods, remove the label from the old
+node first, then label the new one. Check your node names with
+`kubectl get nodes`.
 
 ---
 

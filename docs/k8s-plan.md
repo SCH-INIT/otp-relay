@@ -87,7 +87,7 @@ SCH-INIT/otp-relay (k8s branch)
 │   │   └── dockerfile.md
 │   ├── operations/
 │   │   ├── build-guide.md
-│   │   ├── setup-app.md
+│   │   ├── setup-guide.md
 │   │   └── github-actions-deploy.md
 │   └── help/
 │       ├── assets/
@@ -272,6 +272,39 @@ The Kubernetes version is good enough for Phase 1 when all of this works:
 
 ---
 
+## Phase 1.5 — Observability
+
+### Why before Phase 2
+
+Phase 2 is going to deliberately break the running system to learn about shared
+state. Before we do that, we want to see what is happening inside the cluster:
+which pods restarted, when memory pressure happened, where requests are slow,
+and how often the iPhone goes offline. Observability is the instrument panel
+for Phase 2 and beyond.
+
+### Scope
+
+- Metrics: Prometheus + Grafana (kube-prometheus-stack), running in its own namespace.
+- Logs: Loki + Grafana Alloy, queried through the same Grafana.
+- Alerts: Alertmanager routing to the existing Telegram bot.
+- App-side: FastAPI exposes Prometheus metrics; the monitor exposes ARP and
+  iPhone-presence metrics.
+- Dashboards: one cluster-health dashboard, one OTP Relay app dashboard.
+- Pinned: Prometheus and Loki PVCs land on `srvk3wrk02.local`, Grafana on
+  `srvk3wrk01.local`. A single worker failure does not take down both
+  observability and the app at once.
+- Access: `https://srvgrafana.init-db.lan` on a second MetalLB IP, TLS via Traefik.
+
+### Documents produced in this phase
+
+- `docs/dev/observability-design.md` — decisions and trade-offs.
+- `docs/operations/observability-setup.md` — beginner-level install guide.
+- `docs/operations/observability-runbook.md` — which dashboard, which alert, what to do.
+- `docs/diagrams/observability-architecture.svg` — where the observability stack fits.
+- `docs/diagrams/end-to-end-request-path.svg` — browser/iPhone to pod to storage.
+
+---
+
 ## Phase 2 — Prove and fix stateful pain
 
 ### Goal
@@ -322,10 +355,7 @@ After Redis/shared state exists:
 - Add a PodDisruptionBudget.
 - Test rolling updates.
 - Kill pods and confirm recovery.
-- Drain a node if there is more than one node.
-- Add monitoring:
-  - start with `kubectl`, logs, and k9s
-  - later Prometheus/Grafana if useful
+- Drain a worker node and confirm the surviving worker keeps the service alive.
 - Consider HPA only after metrics and shared state are working.
 
 Done when a single pod failure does not interrupt normal use.

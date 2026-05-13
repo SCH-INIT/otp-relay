@@ -1,14 +1,22 @@
 # OTP Relay — Deployment Guide
 
 Step-by-step instructions for deploying OTP Relay on a fresh K3s cluster.
-Run all `kubectl` commands on the master node as `initadmin` (or equivalent sudo user).
+Run all `kubectl` commands on the master node (`srvk3mst01.local`) as
+`initadmin` (or equivalent sudo user).
 
 Throughout this guide, `kubectl` means `sudo k3s kubectl`.
 
 
 ## Prerequisites
 
-A K3s cluster with at least one master and one worker node.
+A K3s cluster with one master and two workers. The reference cluster:
+
+| Role | Hostname |
+|---|---|
+| Master | `srvk3mst01.local` |
+| Worker (storage node) | `srvk3wrk01.local` |
+| Worker | `srvk3wrk02.local` |
+
 K3s must be installed with the built-in load balancer (servicelb/Klipper) disabled,
 because we use MetalLB instead. If the cluster is already running with Klipper active,
 fix it before proceeding:
