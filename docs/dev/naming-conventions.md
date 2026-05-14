@@ -13,7 +13,7 @@ There are two kinds of names, and they follow different rules.
 | Layer | What it names | Convention | Example |
 |---|---|---|---|
 | Hosts | Physical or virtual machines (cluster nodes) | `srv<role><nn>.local` | `srvk3mst01.local` |
-| Services | Things users or other services talk to | `<purpose>.init-db.lan` | `otp.init-db.lan` |
+| Services | Things users or other services talk to | `<purpose>.init-db.lan` | `rta.init-db.lan` |
 
 The `srv` prefix on host names is a legacy from the previous server-naming
 convention. It is correct for hosts: they are servers. It is wrong for
@@ -44,10 +44,10 @@ label.
 
 Rules:
 
-1. **Short.** One word where possible. `otp`, `rta`, `grafana`.
+1. **Short.** One word where possible. `rta`, `grafana`.
 2. **Purpose-driven.** Name the function, not the box it runs on, and not the
    sequence number of the host that happens to host it.
-3. **Lowercase, no hyphens unless unavoidable.** `otp` not `otp-relay`,
+3. **Lowercase, no hyphens unless unavoidable.** `rta` not `rta-portal`,
    `grafana` not `grafana-dashboard`.
 4. **No version numbers, no instance numbers, no `srv` prefix.**
 
@@ -55,9 +55,8 @@ Current service names:
 
 | Service | DNS | Purpose |
 |---|---|---|
-| `otp.init-db.lan` | OTP Relay portal | Frontend + API for staff and the iPhone Shortcut |
-| `rta.init-db.lan` | RTA Access Portal | Onboarding guidance and admin tooling for RTA |
-| `grafana.init-db.lan` | Grafana | Metrics and logs dashboard for the cluster and app |
+| `rta.init-db.lan` | RTA Access Portal | User-facing portal. Onboards staff to the RTA remote access solution and contains the OTP relay as a feature. |
+| `grafana.init-db.lan` | Grafana | Metrics and logs dashboard for the cluster and the portal. |
 
 Future services follow the same pattern.
 
@@ -65,18 +64,70 @@ Future services follow the same pattern.
 
 ## Product names vs functional names
 
-Some service names match a product (`grafana`). Others are functional (`otp`,
-`rta`). We accept both, but the preference depends on the case:
+Some service names match a product (`grafana`). Others are functional (`rta`).
+We accept both, but the preference depends on the case:
 
 - **Use the product name** when the product is well-known and unlikely to be
   swapped soon. Grafana is a stable choice; staff search "grafana" in their
   browser bar; matching the DNS to the muscle-memory wins.
 - **Use a functional name** when the underlying tool is an implementation
-  detail or might change. We name the OTP relay `otp`, not `fastapi` or
-  `otp-relay`.
+  detail or might change. We name the portal `rta` because the user value is
+  "access to RTA," not the FastAPI framework that happens to power it.
 
 If you have to think about which to use, default to **functional**. Product
 names are a convenience, not a rule.
+
+---
+
+## External name vs internal component name
+
+The portal's external DNS is `rta.init-db.lan`, but the underlying OTP relay
+component keeps its historical names internally:
+
+- Repo: `otp-relay`
+- Kubernetes namespace: `otp-relay`
+- Deployments: `otp-relay`, `otp-monitor`
+- Service: `otp-relay`
+- PVC: `otp-relay-data`
+- Prometheus metric prefix: `otp_*`
+
+This is deliberate. The internal names describe the OTP-relay subsystem that
+the portal is built around. The portal grew out of that subsystem and now
+contains it as one feature among others. Renaming internally would be a large
+churn for no operational benefit.
+
+Rule: **new things that are not part of the OTP relay subsystem should not
+use the `otp_` or `otp-relay` prefix.** Future portal features that are not
+OTP-related use `rta_*` or `portal_*` prefixes as appropriate.
+
+---
+
+## The iPhone exception
+
+The iPhone Shortcut that posts received SMS messages to the portal uses a
+direct IP URL, not the DNS name:
+
+```
+https://172.31.10.84/sms-received
+```
+
+This is **not** because we want to bypass DNS. It is because iOS Shortcuts in
+background context have unreliable DNS resolution, and a hardcoded IP is the
+only reliable way for the Shortcut to reach the portal.
+
+Consequences:
+
+- The wildcard TLS cert covers `*.init-db.lan` **and** `IP:172.31.10.84`.
+  Without the IP SAN, the iPhone Shortcut fails TLS validation.
+- The MetalLB IP `172.31.10.84` is pinned to the bundled K3s Traefik Service
+  with an explicit `loadBalancerIP` annotation, so it cannot drift to another
+  service.
+- The iPhone IP itself (`172.31.10.161`) is hardcoded in the monitor's
+  ConfigMap. The iPhone path assumes IP stability on both sides.
+
+If the iPhone ever moves to a more sensible client model where DNS is
+reliable (or we replace the SMS ingestion entirely), the IP SAN can be
+dropped and the cert simplified.
 
 ---
 
@@ -101,7 +152,7 @@ Previous names that have been retired:
 
 | Old name | New name | Date retired | Notes |
 |---|---|---|---|
-| `srvotp26.init-db.lan` | `otp.init-db.lan` | (Phase 1.5 TLS cleanup) | Hard cutover, no transition period — portal not yet in productive use |
+| `srvotp26.init-db.lan` | `rta.init-db.lan` | (Phase 1.5 TLS cleanup) | Hard cutover, no transition period. The portal was not yet in productive use. |
 
 When retiring an old name, remove it from DNS in the same change that adds
 the new one. Do not keep both pointed at the same Service indefinitely; that
