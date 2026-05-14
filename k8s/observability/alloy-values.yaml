@@ -1,0 +1,115 @@
+# Helm values for Grafana Alloy (log shipper)
+#
+# Chart source: grafana/alloy (chart version 1.8.1 at time of writing)
+# Role: read container logs from every node via the Kubernetes API, ship to Loki.
+# Deployment: DaemonSet (one pod per node).
+#
+# This config uses the loki.source.kubernetes component (API-based) rather
+# than tailing files on the node filesystem. It is the pattern Grafana
+# recommends for Kubernetes log collection and avoids hostPath mounts.
+#
+# Design reference: docs/dev/observability-design.md
+
+# -----------------------------------------------------------------------------
+# Deployment as DaemonSet
+# -----------------------------------------------------------------------------
+controller:
+  type: daemonset
+
+  # Tolerate the master taint so we collect master logs too
+  # (Traefik runs on the master in K3s).
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+
+alloy:
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 20m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+
+  # Not mounting /var/log — we use the Kubernetes API for log collection
+  mounts:
+    varlog: false
+
+  # Alloy clustering — not needed for our DaemonSet pattern
+  clustering:
+    enabled: false
+
+  stabilityLevel: generally-available
+
+  # The Alloy "river" configuration. This config:
+  # 1. Discovers all pods cluster-wide via the Kubernetes API.
+  # 2. Filters discovery to pods running on the same node as this Alloy instance.
+  # 3. Attaches namespace/pod/container/node labels to each stream.
+  # 4. Ships logs to the Loki we deployed.
+  configMap:
+    create: true
+    content: |-
+      // Local node name comes from the downward API; see env block below.
+      // The Helm chart already wires NODE_NAME into the pod via fieldRef.
+
+      // Discover pods (cluster-wide) but only target ones on this node.
+      discovery.kubernetes "pods" {
+        role = "pod"
+
+        selectors {
+          role  = "pod"
+          field = "spec.nodeName=" + sys.env("HOSTNAME")
+        }
+      }
+
+      // Relabel: keep namespace, pod, container, node as Loki labels.
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      // Read pod logs through the Kubernetes API (no hostPath needed).
+      loki.source.kubernetes "pod_logs" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.write.default.receiver]
+      }
+
+      // Ship to the Loki we deployed in this same namespace.
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+# Wire HOSTNAME from the node name via the downward API.
+# Some Helm versions of the chart do this by default; doing it explicitly
+# guarantees the filter above works.
+extraEnv:
+  - name: HOSTNAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+
+# Service account needs to read pods cluster-wide for discovery
+# and to access pod logs through the API.
+serviceAccount:
+  create: true
+
+rbac:
+  create: true
