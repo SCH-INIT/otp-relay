@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 import bcrypt
 import openpyxl
 from dotenv import load_dotenv
+from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 
 try:
     import redis
@@ -52,6 +53,79 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -- Prometheus metrics -------------------------------------------------------
+# These metrics describe the OTP-relay subsystem (the queue, the iPhone path).
+# Naming follows docs/dev/naming-conventions.md: otp_* prefix for OTP-relay
+# machinery; non-OTP portal features would use rta_* or portal_* later.
+#
+# Counters are incremented inside audit() via the OTP_AUDIT_COUNTERS table.
+# Gauges (queue depth, active user) are measured on demand at scrape time.
+
+otp_claims_total = Counter(
+    "otp_claims_total",
+    "Total number of times a user claimed the active slot.",
+)
+otp_delivered_total = Counter(
+    "otp_delivered_total",
+    "Total number of OTPs successfully delivered to a recipient.",
+)
+otp_claim_expired_total = Counter(
+    "otp_claim_expired_total",
+    "Total number of claims that timed out without an OTP arriving.",
+)
+otp_request_duration_seconds = Histogram(
+    "otp_request_duration_seconds",
+    "HTTP request duration in seconds.",
+    ["method", "endpoint", "status"],
+)
+
+# Audit-event-name to counter mapping. Hook is in audit() below.
+OTP_AUDIT_COUNTERS = {
+    "claim_queued": otp_claims_total,
+    "otp_delivered": otp_delivered_total,
+    "claim_expired": otp_claim_expired_total,
+}
+
+# Gauges measured on demand. The set_function callbacks are invoked by
+# prometheus_client at scrape time, so the returned values are always live.
+# Defined further down once the underlying queue state is available; see
+# _attach_gauge_callbacks() at module-load tail.
+otp_queue_depth = Gauge(
+    "otp_queue_depth",
+    "Current number of OTPs pending delivery (claim queue depth).",
+)
+otp_active_user = Gauge(
+    "otp_active_user",
+    "Whether someone currently holds the active slot (1) or not (0).",
+)
+
+
+@app.middleware("http")
+async def _record_request_duration(request: Request, call_next):
+    """Record per-request latency in the otp_request_duration_seconds histogram.
+
+    The 'endpoint' label is the route's path template (e.g. /claim-status/{token}),
+    not the actual URL, so we don't blow up cardinality with one series per
+    distinct token. Falls back to the raw path if no route matched (404, etc.).
+    """
+    import time as _time
+    start = _time.perf_counter()
+    response = await call_next(request)
+    elapsed = _time.perf_counter() - start
+
+    route = request.scope.get("route")
+    endpoint = getattr(route, "path", request.url.path)
+    otp_request_duration_seconds.labels(
+        method=request.method,
+        endpoint=endpoint,
+        status=str(response.status_code),
+    ).observe(elapsed)
+    return response
+
+
+# Mount /metrics. This must come before the StaticFiles catch-all on "/".
+app.mount("/metrics", make_asgi_app())
 
 # -- Config -------------------------------------------------------------------
 SMS_SECRET_TOKEN = os.getenv("SMS_SECRET_TOKEN", "changeme")
@@ -839,6 +913,13 @@ def audit(event: str, token: Optional[str] = None, detail: str = "", status: str
     level = {"info": logging.INFO, "warn": logging.WARNING, "error": logging.ERROR}.get(status, logging.INFO)
     logger.log(level, "[%s] token=%s  %s", event, token or "-", detail)
 
+    # Bump the matching Prometheus counter, if this event has one.
+    # Keeping the increment here means both the Redis and in-memory queue paths
+    # are covered by the single audit() call site each path already uses.
+    counter = OTP_AUDIT_COUNTERS.get(event)
+    if counter is not None:
+        counter.inc()
+
 
 def read_audit_log(limit: int = 200) -> list:
     limit = max(1, min(int(limit or 200), 2000))
@@ -1530,6 +1611,22 @@ def serve_guide_html():
     if not guide_path.exists():
         raise HTTPException(status_code=404, detail="guide.html not deployed")
     return FileResponse(guide_path)
+
+
+# -- Prometheus gauge callbacks ------------------------------------------------
+# The gauges defined near the top of this file are populated on demand via
+# set_function. The callbacks reference _use_redis_state, claim_queue, and
+# _redis_queue_tokens, which are all defined further up by this point.
+
+def _current_queue_depth() -> int:
+    """Returns the live queue depth, regardless of state backend."""
+    if _use_redis_state():
+        return len(_redis_queue_tokens())
+    return len(claim_queue)
+
+
+otp_queue_depth.set_function(_current_queue_depth)
+otp_active_user.set_function(lambda: 1 if _current_queue_depth() > 0 else 0)
 
 
 # Serve frontend - must be last

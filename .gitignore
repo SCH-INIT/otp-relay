@@ -26,3 +26,6 @@ __pycache__/
 
 # Jathin's DNS agreement
 docs/operations/jathin-brief-internal-ca.md
+
+# patch files
+.patch

@@ -7,3 +7,4 @@ pydantic
 markdown
 pyyaml
 python-multipart
+prometheus_client
