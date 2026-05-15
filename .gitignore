@@ -28,4 +28,4 @@ __pycache__/
 docs/operations/jathin-brief-internal-ca.md
 
 # patch files
-.patch
+*.patch

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import bcrypt
 import openpyxl
 from dotenv import load_dotenv
-from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 try:
     import redis
@@ -30,7 +30,7 @@ except ImportError:
     redis = None
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -124,8 +124,12 @@ async def _record_request_duration(request: Request, call_next):
     return response
 
 
-# Mount /metrics. This must come before the StaticFiles catch-all on "/".
-app.mount("/metrics", make_asgi_app())
+# Expose /metrics as a regular route rather than a sub-app mount.
+# An app.mount() requires a trailing slash from clients (Prometheus and curl
+# alike), which is fiddly. A plain GET route handles /metrics cleanly.
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # -- Config -------------------------------------------------------------------
 SMS_SECRET_TOKEN = os.getenv("SMS_SECRET_TOKEN", "changeme")
