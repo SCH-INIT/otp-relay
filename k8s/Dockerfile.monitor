@@ -18,10 +18,12 @@ RUN useradd --system --uid 999 --no-create-home --shell /usr/sbin/nologin otprel
 
 WORKDIR /app
 
-# Install Python dependencies
+# Install Python dependencies. Uses the same requirements.txt as the main app
+# image — the monitor over-installs a few packages (fastapi, etc.) it does not
+# use. Cost is small and keeps a single source of truth for dependencies.
+COPY requirements.txt .
 RUN python -m venv /app/venv && \
-    /app/venv/bin/pip install --no-cache-dir \
-        python-dotenv
+    /app/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 COPY monitor.py .
 

@@ -11,20 +11,13 @@ RUN npx babel frontend/app.jsx --presets @babel/preset-react --out-file frontend
 # Install Python dependencies and build help docs.
 FROM python:3.12-slim AS builder
 WORKDIR /build
+COPY requirements.txt .
+RUN python -m venv /build/venv && \
+    /build/venv/bin/pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY --from=frontend /build/frontend/ ./frontend/
 COPY docs/help/ ./docs/help/
 COPY scripts/build_help_docs.py ./scripts/build_help_docs.py
-RUN python -m venv /build/venv && \
-    /build/venv/bin/pip install --no-cache-dir \
-        fastapi \
-        uvicorn \
-        openpyxl \
-        python-dotenv \
-        bcrypt \
-        python-multipart \
-        markdown \
-        pyyaml
 # Build help docs: converts docs/help/*.md into frontend/help/wizard-guide.json
 # and frontend/help/rendered/*.html.
 RUN /build/venv/bin/python scripts/build_help_docs.py
