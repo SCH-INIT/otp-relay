@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otp-relay
+  namespace: observability
+  labels:
+    app: otp-relay
+spec:
+  # Match the Service in the otp-relay namespace
+  namespaceSelector:
+    matchNames:
+      - otp-relay
+  selector:
+    matchLabels:
+      app: otp-relay
+  endpoints:
+    - port: http          # the named port on the otp-relay Service
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

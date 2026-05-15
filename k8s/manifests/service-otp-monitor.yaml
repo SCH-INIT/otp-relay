@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: otp-monitor
+  namespace: otp-relay
+  labels:
+    app: otp-monitor
+spec:
+  type: ClusterIP
+  # The monitor pod uses hostNetwork: true, so port 9101 is bound on the
+  # node's interfaces directly. Kubernetes still resolves this Service via
+  # the pod's IP (which equals the node IP in hostNetwork mode), so the
+  # ServiceMonitor scrape works through the standard Service abstraction.
+  selector:
+    app: otp-monitor
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: 9101
+      targetPort: 9101

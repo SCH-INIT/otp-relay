@@ -1,0 +1,210 @@
+diff --git a/k8s/manifests/configmap.yaml b/k8s/manifests/configmap.yaml
+index 484283d..f7afab2 100644
+--- a/k8s/manifests/configmap.yaml
++++ b/k8s/manifests/configmap.yaml
+@@ -14,6 +14,7 @@ data:
+   PHONE_INTERFACE: "ens33"
+   PHONE_IP: "172.31.10.161"
+   PHONE_OFFLINE_THRESHOLD: "2"
+-  PHONE_PING_INTERVAL: "150"
++  PHONE_PING_INTERVAL: "60"
++  MONITOR_METRICS_PORT: "9101"
+   SERVER_HOSTNAME: "srvotp26.init-db.lan"
+   USERS_EXCEL_PATH: "data/users.xlsx"
+diff --git a/k8s/manifests/service-otp-monitor.yaml b/k8s/manifests/service-otp-monitor.yaml
+new file mode 100644
+index 0000000..82d717f
+--- /dev/null
++++ b/k8s/manifests/service-otp-monitor.yaml
+@@ -0,0 +1,20 @@
++apiVersion: v1
++kind: Service
++metadata:
++  name: otp-monitor
++  namespace: otp-relay
++  labels:
++    app: otp-monitor
++spec:
++  type: ClusterIP
++  # The monitor pod uses hostNetwork: true, so port 9101 is bound on the
++  # node's interfaces directly. Kubernetes still resolves this Service via
++  # the pod's IP (which equals the node IP in hostNetwork mode), so the
++  # ServiceMonitor scrape works through the standard Service abstraction.
++  selector:
++    app: otp-monitor
++  ports:
++    - name: metrics
++      protocol: TCP
++      port: 9101
++      targetPort: 9101
+diff --git a/k8s/observability/servicemonitor-otp-monitor.yaml b/k8s/observability/servicemonitor-otp-monitor.yaml
+new file mode 100644
+index 0000000..dd1c942
+--- /dev/null
++++ b/k8s/observability/servicemonitor-otp-monitor.yaml
+@@ -0,0 +1,19 @@
++apiVersion: monitoring.coreos.com/v1
++kind: ServiceMonitor
++metadata:
++  name: otp-monitor
++  namespace: observability
++  labels:
++    app: otp-monitor
++spec:
++  namespaceSelector:
++    matchNames:
++      - otp-relay
++  selector:
++    matchLabels:
++      app: otp-monitor
++  endpoints:
++    - port: metrics       # the named port on the otp-monitor Service
++      path: /metrics
++      interval: 15s
++      scrapeTimeout: 10s
+diff --git a/k8s/observability/servicemonitor-otp-relay.yaml b/k8s/observability/servicemonitor-otp-relay.yaml
+new file mode 100644
+index 0000000..b2d5c66
+--- /dev/null
++++ b/k8s/observability/servicemonitor-otp-relay.yaml
+@@ -0,0 +1,20 @@
++apiVersion: monitoring.coreos.com/v1
++kind: ServiceMonitor
++metadata:
++  name: otp-relay
++  namespace: observability
++  labels:
++    app: otp-relay
++spec:
++  # Match the Service in the otp-relay namespace
++  namespaceSelector:
++    matchNames:
++      - otp-relay
++  selector:
++    matchLabels:
++      app: otp-relay
++  endpoints:
++    - port: http          # the named port on the otp-relay Service
++      path: /metrics
++      interval: 15s
++      scrapeTimeout: 10s
+diff --git a/monitor.py b/monitor.py
+index eec2291..437a407 100755
+--- a/monitor.py
++++ b/monitor.py
+@@ -23,8 +23,10 @@ import urllib.parse
+ import urllib.request
+ from datetime import datetime, timezone
+ from pathlib import Path
++from typing import Optional
+ 
+ from dotenv import load_dotenv
++from prometheus_client import Counter, Gauge, Histogram, start_http_server
+ 
+ BASE_DIR = Path(__file__).resolve().parent
+ load_dotenv(BASE_DIR / ".env")
+@@ -51,6 +53,7 @@ PHONE_INTERFACE = os.getenv("PHONE_INTERFACE", "ens33")
+ PHONE_PING_INTERVAL = int(os.getenv("PHONE_PING_INTERVAL", "300"))
+ PHONE_OFFLINE_THRESHOLD = int(os.getenv("PHONE_OFFLINE_THRESHOLD", "2"))
+ BATCH_WINDOW_SEC = int(os.getenv("BATCH_WINDOW_SEC", "10"))
++METRICS_PORT = int(os.getenv("MONITOR_METRICS_PORT", "9101"))
+ 
+ # Prefer an explicit URL for Kubernetes, where Service/Ingress naming may differ.
+ _explicit_portal_url = os.getenv("PORTAL_URL", "").strip()
+@@ -73,6 +76,51 @@ logging.basicConfig(
+ logger = logging.getLogger("otp-monitor")
+ 
+ 
++# ── Prometheus metrics ────────────────────────────────────────────────────────
++# Five metrics describing the iPhone-watching role of this process.
++# All use the otp_ prefix per docs/dev/naming-conventions.md.
++
++otp_iphone_present = Gauge(
++    "otp_iphone_present",
++    "Whether the iPhone is currently reachable (1) or absent (0).",
++)
++otp_iphone_absence_seconds = Gauge(
++    "otp_iphone_absence_seconds",
++    "Seconds since the iPhone went absent. 0 while present.",
++)
++otp_iphone_absence_events_total = Counter(
++    "otp_iphone_absence_events_total",
++    "Total number of present-to-absent transitions.",
++)
++otp_iphone_absence_duration_seconds = Histogram(
++    "otp_iphone_absence_duration_seconds",
++    "Distribution of absence durations, observed when the iPhone returns.",
++    buckets=(30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, float("inf")),
++)
++otp_monitor_arp_last_success_timestamp_seconds = Gauge(
++    "otp_monitor_arp_last_success_timestamp_seconds",
++    "Unix timestamp of the last successful ARP probe.",
++)
++
++# Initial state: assume present until proven otherwise. Updated by watch_phone().
++otp_iphone_present.set(1)
++otp_iphone_absence_seconds.set(0)
++
++
++# Internal state to drive otp_iphone_absence_seconds at scrape time.
++# Set when the iPhone transitions present -> absent; cleared on return.
++_absence_started_at: Optional[float] = None
++
++
++def _current_absence_seconds() -> float:
++    if _absence_started_at is None:
++        return 0.0
++    return max(0.0, time.time() - _absence_started_at)
++
++
++otp_iphone_absence_seconds.set_function(_current_absence_seconds)
++
++
+ # ── Audit log writer ──────────────────────────────────────────────────────────
+ def audit(event: str, detail: str = "", status: str = "info"):
+     entry = {
+@@ -253,7 +301,17 @@ def watch_phone():
+ 
+     while True:
+         if ping(PHONE_IP):
++            otp_monitor_arp_last_success_timestamp_seconds.set(time.time())
+             if not phone_online:
++                # Present-after-absent transition: record the absence duration
++                # and reset absence state.
++                global _absence_started_at
++                if _absence_started_at is not None:
++                    duration = max(0.0, time.time() - _absence_started_at)
++                    otp_iphone_absence_duration_seconds.observe(duration)
++                _absence_started_at = None
++                otp_iphone_present.set(1)
++
+                 phone_online = True
+                 consecutive_failures = 0
+                 audit("phone_online", f"iPhone {PHONE_IP} is reachable again", "error")
+@@ -266,6 +324,12 @@ def watch_phone():
+                 logger.info(f"ARP failed ({consecutive_failures}/{PHONE_OFFLINE_THRESHOLD})")
+ 
+             if phone_online and consecutive_failures >= PHONE_OFFLINE_THRESHOLD:
++                # Online-to-absent transition: count the event and start the
++                # absence timer. The gauge updates on demand via set_function.
++                _absence_started_at = time.time()
++                otp_iphone_absence_events_total.inc()
++                otp_iphone_present.set(0)
++
+                 phone_online = False
+                 audit(
+                     "phone_offline",
+@@ -287,6 +351,13 @@ if __name__ == "__main__":
+         "info",
+     )
+ 
++    # Start the Prometheus metrics endpoint on its own port.
++    # Binds 0.0.0.0:9101; on the monitor pod (hostNetwork: true) this means
++    # the node's LAN-facing interface. Accepted exposure — metrics carry no
++    # secrets and the cluster is on the company LAN.
++    start_http_server(METRICS_PORT)
++    logger.info(f"Prometheus metrics on :{METRICS_PORT}/metrics")
++
+     phone_thread = threading.Thread(target=watch_phone, daemon=True)
+     phone_thread.start()
+ 
