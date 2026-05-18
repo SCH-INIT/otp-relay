@@ -282,26 +282,190 @@ which pods restarted, when memory pressure happened, where requests are slow,
 and how often the iPhone goes offline. Observability is the instrument panel
 for Phase 2 and beyond.
 
-### Scope
+### What this phase originally planned to do
 
-- Metrics: Prometheus + Grafana (kube-prometheus-stack), running in its own namespace.
-- Logs: Loki + Grafana Alloy, queried through the same Grafana.
-- Alerts: Alertmanager routing to the existing Telegram bot.
-- App-side: FastAPI exposes Prometheus metrics; the monitor exposes ARP and
-  iPhone-presence metrics.
-- Dashboards: one cluster-health dashboard, one OTP Relay app dashboard.
-- Pinned: Prometheus and Loki PVCs land on `srvk3wrk02.local`, Grafana on
-  `srvk3wrk01.local`. A single worker failure does not take down both
-  observability and the app at once.
-- Access: `https://srvgrafana.init-db.lan` on a second MetalLB IP, TLS via Traefik.
+The nine-step plan as set out at the start:
 
-### Documents produced in this phase
+1. Doc correction pass — fix cluster shape (3 nodes), references to old hostnames.
+2. Phase-2 architecture diagram.
+3. `observability-design.md` with the decisions and trade-offs.
+4. Install Prometheus + Grafana + Loki + Alloy.
+5. App and monitor metrics — instrument both Python processes.
+6. Build the custom OTP Relay dashboard in Grafana.
+7. Alertmanager wired to Telegram, with alert rules matching the design grammar.
+8. Runbook covering known failure modes.
+9. Updated architecture diagrams.
 
+### What actually happened
+
+The plan held in broad strokes, but real life intervened in two ways worth recording.
+
+**TLS work crept in (and was worth it).** Step 2 was originally a diagram. While
+that step was pending, Jathin produced the internal CA we had been waiting for,
+which unlocked a much bigger piece of work — the full TLS migration. Done in
+four stages (cert as Traefik default, portal cutover to `rta.init-db.lan`,
+iPhone Shortcut migration over HTTPS, dropping the `.83` MetalLB IP). That work
+arguably belonged in its own phase, but doing it inside Phase 1.5 meant the
+observability install benefited from clean HTTPS routing for Grafana from the
+start. Worth the scope drift.
+
+**Telegram message format was rewritten.** The original monitor code used
+`🔴 OTP Relay Alert` style messages with batching and a portal-link footer.
+Once the alert grammar was defined in `observability-design.md`, the monitor's
+existing Telegram path was reworked to match (subject glyph + severity glyph
++ short text, no URLs). Batching was dropped — single, well-shaped messages
+per event. Only iPhone state changes get monitor-side alerts; everything else
+will route through Alertmanager.
+
+### Steps completed
+
+- **Step 1 — Doc corrections.** Cluster shape (3 nodes) corrected across
+  `setup-guide.md`, `deploy.md`, `build-guide.md`. Naming conventions doc
+  added (`docs/dev/naming-conventions.md`): hosts `srv<role><nn>.local`,
+  services `<purpose>.init-db.lan`. Portal renamed from
+  `srvotp26.init-db.lan` to `rta.init-db.lan`. Grafana name reserved as
+  `grafana.init-db.lan`.
+
+- **Step 3 — Observability design.** `docs/dev/observability-design.md`
+  captures the stack choice (kube-prometheus-stack + Loki + Alloy +
+  Alertmanager), node placement, resource budget, metric inventory, alert
+  grammar (subject + severity glyphs), and what is deliberately out of scope.
+
+- **Step 4 — Stack installed.** Three Helm releases pinned to versions:
+  kube-prometheus-stack 85.0.1, Loki 13.7.2, Alloy 1.8.1. Plus
+  prometheus-operator-crds 29.0.0 as a separate CRD-only release.
+  Grafana sized at 512Mi (first attempt at 256Mi OOM'd under UI load).
+  Pinning: Prometheus+Loki on `srvk3wrk02`, Grafana on `srvk3wrk01`.
+  Setup documented in `docs/operations/observability-setup.md` at a level
+  Jathin can reproduce from scratch.
+
+- **Step 5 — App and monitor instrumented.** Six metrics in `main.py`
+  (`otp_claims_total`, `otp_delivered_total`, `otp_claim_expired_total`,
+  `otp_request_duration_seconds`, `otp_queue_depth`, `otp_active_user`).
+  Five metrics in `monitor.py` (`otp_iphone_present`,
+  `otp_iphone_absence_seconds`, `otp_iphone_absence_events_total`,
+  `otp_iphone_absence_duration_seconds`, `otp_monitor_arp_last_success_timestamp_seconds`).
+  Both processes expose `/metrics`; ServiceMonitors tell Prometheus to scrape
+  them. Queue-depth and active-user gauges measured on-demand via
+  `set_function` callbacks, so they reflect live state regardless of whether
+  the backend is in-memory or Redis. Prometheus scrape interval 15s.
+
+- **Step 6 — Dashboard v1.** Three rows visible: pipeline (5 stat panels —
+  📱 iPhone → 🚪 Portal → 📥 Queue → 👤 Active → ✉️ Delivered 24h),
+  support strip (4 panels — 👁️ Monitor, 🎛️ Nodes, 📊 Prometheus,
+  ⏰ Last ARP), and trends (OTPs per hour + iPhone absence events, with
+  shared tooltip for visual correlation). Dashboard JSON committed to
+  `k8s/observability/dashboards/otp-relay-live.json` as a snapshot — not yet
+  auto-provisioned; manual export-and-commit for now.
+
+- **TLS migration.** Wildcard `*.init-db.lan` cert from Jathin's internal CA
+  installed as Traefik's default. Portal accessible at `https://rta.init-db.lan`,
+  Grafana at `https://grafana.init-db.lan`, iPhone Shortcut hitting
+  `https://172.31.10.84/sms-received` directly. The old `srvotp26.init-db.lan`
+  hostname and the `172.31.10.83` MetalLB IP are gone.
+
+- **Telegram tidy.** Monitor sends `📱🔥 iPhone offline. Last seen just now.`
+  and `📱👍 iPhone back. Was offline 12m.` Per-event, no batching, no URLs.
+  All other audit events fall through silently and will be picked up by
+  Alertmanager in step 7.
+
+- **K3s ServiceLB conflict — documented.** Halfway through the dashboard
+  work, MetalLB silently withdrew `172.31.10.84` because the Traefik Service
+  had been asking for the same IP two ways (annotation + spec field), with
+  K3s's bundled ServiceLB making the timing flare up. Recovered by removing
+  the duplicate annotation. Full diagnosis and recovery procedure now in
+  `docs/operations/runbook.md`. The underlying conflict — K3s ServiceLB
+  running alongside MetalLB — is not yet fixed; documented in
+  `docs/operations/k3s-cluster-bootstrap.md` so a future cluster gets
+  `--disable=servicelb` from the start.
+
+### Documents produced
+
+- `docs/dev/naming-conventions.md` — host and service naming.
 - `docs/dev/observability-design.md` — decisions and trade-offs.
 - `docs/operations/observability-setup.md` — beginner-level install guide.
-- `docs/operations/observability-runbook.md` — which dashboard, which alert, what to do.
-- `docs/diagrams/observability-architecture.svg` — where the observability stack fits.
-- `docs/diagrams/end-to-end-request-path.svg` — browser/iPhone to pod to storage.
+- `docs/operations/k3s-cluster-bootstrap.md` — prerequisite cluster install.
+- `docs/operations/runbook.md` — first entry, more to come.
+- `k8s/observability/prometheus-stack-values.yaml`, `loki-values.yaml`,
+  `alloy-values.yaml` — Helm values pinned and committed.
+- `k8s/observability/grafana-ingress.yaml`, `servicemonitor-otp-relay.yaml`,
+  `servicemonitor-otp-monitor.yaml` — cluster manifests.
+- `k8s/observability/dashboards/otp-relay-live.json` — dashboard snapshot.
+
+### Lessons learned worth recording
+
+- **Build-pipeline truth checks.** Adding a dependency in `requirements.txt`
+  did nothing for ~30 minutes of debugging because the Dockerfile hardcoded
+  the dependency list. Worth grepping the Dockerfile for `requirements.txt`
+  references before adding a Python package. Fixed by switching the Dockerfile
+  to actually use `requirements.txt`.
+
+- **Cumulative manual commands become invisible state.** The
+  `metallb.universe.tf/loadBalancerIPs` annotation was added with
+  `kubectl annotate` early in cluster life. It was correct at the time but
+  conflicted with a later HelmChartConfig that asked for the same IP via the
+  spec field. Two configurations, both valid in isolation, broken together.
+  General rule: prefer declarative (manifests, HelmChartConfig) over
+  imperative (`kubectl annotate`, `kubectl edit`) for anything that should
+  survive a cluster rebuild.
+
+- **`make_asgi_app()` requires trailing slash, GET routes don't.**
+  FastAPI's sub-app mount serves at `/metrics/` (with slash). A plain
+  `@app.get("/metrics")` route handles both. The latter is what FastAPI docs
+  recommend; use it.
+
+- **Stat panel "graph mode" is often noise.** For binary metrics, counters
+  that only grow, and stable values, the sparkline adds visual chaos without
+  signal. Turn it on only where the shape over time actually carries info
+  (queue depth, request latency).
+
+- **iPhone misses ARP probes ~1-2 times a day for ~120s each time.**
+  Always exactly 61s between `📱🔥` and `📱👍` events — the iPhone reliably
+  responds to the very first probe after waking. Probably iOS low-power
+  state. Not a real failure (Shortcuts run regardless), but our threshold of
+  2 trips the alert anyway. Worth raising to 3 or 4 in Phase 1.5 step 7 once
+  Alertmanager covers the metric-based path.
+
+### Open issues at end of dashboard-snapshot
+
+These do not block the demo but are tracked for future sessions:
+
+- **K3s ServiceLB still active** — bundled DaemonSet `svclb-traefik-be79d612`
+  competing with MetalLB. Will be fixed in Session A (post-demo).
+- **ConfigMap has dead env vars** — `ALERT_LEVEL`, `BATCH_WINDOW_SEC`,
+  `SERVER_HOSTNAME` no longer used by any process. Cosmetic.
+- **Duplicate scrape series** — Prometheus shows `otp_iphone_present` twice
+  per pod for reasons not yet diagnosed. Worked around with `max()` in every
+  dashboard query. Real fix needed.
+- **CA private key sitting on the master, unencrypted.** Follow-up with
+  Jathin to move to encrypted offline storage.
+- **Cert renewal mechanism is manual.** Calendar reminder needed for early
+  April 2027 to renew the wildcard cert before May 15 expiry.
+- **`main.py` is 1626 lines.** File split agreed to defer to its own session,
+  before any Phase 2 work begins.
+
+### Plan from here
+
+Phase 1.5 finishes after Sessions A through D. After that, Phase 1.6 (the
+`main.py` split) is a single-session refactor that gates Phase 2.
+
+| Session | Topic | Estimate |
+|---|---|---|
+| A | K3s ServiceLB fix + ConfigMap cleanup + duplicate-scrape diagnosis | 60-90 min |
+| B | Alertmanager → Telegram, alert rules, message templates, raise `PHONE_OFFLINE_THRESHOLD` | 3-4 hours (could go 5-6) |
+| C | Runbook expansion — entry per alert, plus non-alert procedures | 60-90 min |
+| D | Architecture diagrams — cluster topology + SMS/metrics data-flow | 45-75 min |
+| **— Phase 1.5 done —** |  |  |
+| F | `main.py` file split refactor (no behaviour change) | 3-4 hours |
+| **— Phase 1.6 done —** |  |  |
+| E | Phase 2 / Redis migration (see next section) | 4-6 hours, possibly split |
+
+Total to Phase 1.5 done: roughly 6-10 hours of focused work.
+Total to Phase 2 done: another 7-10 hours beyond that.
+
+Session A is scheduled for Wednesday morning, when real users are not yet
+leaning on the system. The K3s restart causes ~10 seconds of API downtime,
+which is the right kind of risk to take at 9am.
 
 ---
 
