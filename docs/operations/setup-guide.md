@@ -55,8 +55,9 @@ in the `otp-relay` namespace.
 
 Before following this guide, you need:
 
-- [ ] K3s installed and running across the three nodes (one master, two workers)
-- [ ] MetalLB installed and configured with a LAN IP range
+- [ ] K3s installed with `--disable=servicelb`, and MetalLB installed and
+      configured with a LAN IP range. See `k3s-cluster-bootstrap.md` if you
+      don't have this yet.
 - [ ] `kubectl` available on the master node (K3s includes this automatically)
 - [ ] The repo cloned on the server — or at minimum the `k8s/manifests/`
       folder copied across
