@@ -5,8 +5,8 @@
     "name": "adg9vw7",
     "namespace": "default",
     "uid": "1a7b3332-9c7b-4b33-bb46-9026427f10ff",
-    "resourceVersion": "1779086199585011",
-    "generation": 40,
+    "resourceVersion": "1779105313994993",
+    "generation": 46,
     "creationTimestamp": "2026-05-15T11:46:03Z",
     "labels": {
       "grafana.app/deprecatedInternalID": "1611941789442048"
@@ -16,7 +16,7 @@
       "grafana.app/folder": "afmei4vghnvggd",
       "grafana.app/saved-from-ui": "Grafana v13.0.1 (a100054f)",
       "grafana.app/updatedBy": "user:bfm0zi5exnke8e",
-      "grafana.app/updatedTimestamp": "2026-05-18T06:36:39Z",
+      "grafana.app/updatedTimestamp": "2026-05-18T11:55:13Z",
       "grafana.app/folderTitle": "INIT",
       "grafana.app/folderUrl": "/dashboards/f/afmei4vghnvggd/init"
     }
@@ -174,8 +174,8 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "rate(otp_delivered_total[5m]) * 3600",
-                        "legendFormat": "OTPs delivered per hour, smoothed.",
+                        "expr": "sum(increase(otp_delivered_total[5m]))",
+                        "legendFormat": "OTPs delivered (per hour bucket)",
                         "range": true
                       }
                     },
@@ -195,9 +195,9 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "rate(otp_claims_total[5m]) * 3600",
+                        "expr": "sum(increase(otp_claims_total[5m]))",
                         "instant": false,
-                        "legendFormat": "Claims per hour, smoothed.",
+                        "legendFormat": "Claims (per hour bucket)",
                         "range": true
                       }
                     },
@@ -725,7 +725,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "increase(otp_delivered_total[24h])",
+                        "expr": "sum(increase(otp_delivered_total[24h]))",
                         "legendFormat": "__auto",
                         "range": true
                       }
@@ -807,7 +807,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max(up{job=~\"otp-monitor.*\"})",
+                        "expr": "max(up{job=\"otp-monitor\"})",
                         "legendFormat": "__auto",
                         "range": true
                       }
@@ -996,7 +996,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max(up{job=~\"kube-prometheus-stack-prometheus\"})",
+                        "expr": "max(up{job=\"kube-prometheus-stack-prometheus\"})",
                         "legendFormat": "__auto",
                         "range": true
                       }

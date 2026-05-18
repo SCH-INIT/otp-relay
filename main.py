@@ -115,7 +115,7 @@ async def _record_request_duration(request: Request, call_next):
     elapsed = _time.perf_counter() - start
 
     route = request.scope.get("route")
-    endpoint = getattr(route, "path", request.url.path)
+    endpoint = getattr(route, "path", None) or "unknown"
     otp_request_duration_seconds.labels(
         method=request.method,
         endpoint=endpoint,

@@ -443,14 +443,15 @@ These do not block the demo but are tracked for future sessions:
   April 2027 to renew the wildcard cert before May 15 expiry.
 - **`main.py` is 1626 lines.** File split agreed to defer to its own session,
   before any Phase 2 work begins.
-- **Slow memory leak in the portal pod.** Steady-state RSS is ~50Mi, but it
-  grows to >256Mi over ~3 days, triggering OOMKilled by kubelet. Workaround
-  applied: raised memory limit to 512Mi to push the OOM past most restart
-  cycles. The actual leak has not been found. Suspect candidates: audit log
-  read into memory somewhere, login-attempt records accumulating, wizard
-  progress records not pruning. Worth a focused diagnostic session — likely
-  fits in Session F (the `main.py` split) since the same code-walk would
-  identify both the structure issue and the leak.
+- **Memory growth in the portal pod, partly explained.** A cardinality leak
+  in the otp_request_duration_seconds histogram was found and fixed (every
+  unique URL ever requested became a permanent histogram series, growing
+  both the Prometheus scrape response size and pod memory). Pre-fix bandwidth
+  was ~30 Mb/s sustained; post-fix it drops to ~300 kb/s. Whether the
+  histogram alone accounts for the full memory leak that caused OOMKilled
+  events at 256Mi is unknown — the memory limit stays at 512Mi until we've
+  observed several days of steady-state. If RSS stays near 50Mi after a week,
+  we can lower it back to 256Mi. If it still creeps up, there's a second leak.
 
 ### Plan from here
 
