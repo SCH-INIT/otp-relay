@@ -443,6 +443,14 @@ These do not block the demo but are tracked for future sessions:
   April 2027 to renew the wildcard cert before May 15 expiry.
 - **`main.py` is 1626 lines.** File split agreed to defer to its own session,
   before any Phase 2 work begins.
+- **Slow memory leak in the portal pod.** Steady-state RSS is ~50Mi, but it
+  grows to >256Mi over ~3 days, triggering OOMKilled by kubelet. Workaround
+  applied: raised memory limit to 512Mi to push the OOM past most restart
+  cycles. The actual leak has not been found. Suspect candidates: audit log
+  read into memory somewhere, login-attempt records accumulating, wizard
+  progress records not pruning. Worth a focused diagnostic session — likely
+  fits in Session F (the `main.py` split) since the same code-walk would
+  identify both the structure issue and the leak.
 
 ### Plan from here
 
