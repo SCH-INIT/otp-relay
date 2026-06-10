@@ -64,7 +64,9 @@ const API = {
       } else if (raw && typeof raw === 'object') {
         message = raw.msg || raw.message || JSON.stringify(raw);
       }
-      throw new Error(message);
+      const err = new Error(message);
+      err.status = res.status;
+      throw err;
     }
     return data;
   },
@@ -78,8 +80,8 @@ const API = {
   },
   getWizard(token) { return this.json(`/wizard/progress/${encodeURIComponent(token)}`, { headers: { 'X-Wizard-Client': wizardClientSecret() } }); },
   adminAuthStatus() { return this.json('/admin/auth/status'); },
-  adminAuthSetup(credential, current) { return this.json('/admin/auth/setup', { method: 'POST', body: JSON.stringify({ credential, current }) }); },
-  adminAuthLogin(credential) { return this.json('/admin/auth/login', { method: 'POST', body: JSON.stringify({ credential }) }); },
+  adminAuthSetup(token, credential, current) { return this.json('/admin/auth/setup', { method: 'POST', body: JSON.stringify({ token, credential, current }) }); },
+  adminAuthLogin(token, credential) { return this.json('/admin/auth/login', { method: 'POST', body: JSON.stringify({ token, credential }) }); },
   adminAuthLogout(session) { return this.json('/admin/auth/logout', { method: 'POST', headers: { 'X-Admin-Session': session } }); },
   adminWizard(session) { return this.json('/admin/wizard', { headers: { 'X-Admin-Session': session } }); },
   adminQueue(session) { return this.json('/admin/queue', { headers: session ? { 'X-Admin-Session': session } : {} }); },
@@ -584,11 +586,17 @@ function App() {
   const [openStep, setOpenStep] = useState(null);
   const [faqOpen, setFaqOpen] = useState({});
   const [otp, setOtp] = useState({ panel: 'claim', message: '', position: 1, waitEstimate: 0, queueDepth: 0, otpValue: '———', activeRemaining: CONFIG.CLAIM_EXPIRY_SEC, otpRemaining: CONFIG.OTP_DISPLAY_SEC, token: '' });
-  const [admin, setAdmin] = useState({ session: sessionStorage.getItem('adminSession') || '', configured: false, mode: 'login', error: '', credential: '', current: '', confirm: '', data: null, loading: false, configTokens: 'JPR, AMD, SCH' });
+  const [admin, setAdmin] = useState({ session: sessionStorage.getItem('adminSession') || '', who: sessionStorage.getItem('adminWho') || '', configured: false, mode: 'login', error: '', token: '', credential: '', current: '', confirm: '', data: null, loading: false, configTokens: 'JPR, AMD, SCH', adminTokens: [], configuredTokens: [] });
 
   useEffect(() => {
     API.adminAuthStatus()
-      .then(d => setAdmin(s => ({ ...s, configured: !!d.configured, mode: d.configured ? 'login' : 'setup' })))
+      .then(d => setAdmin(s => ({
+        ...s,
+        configured: !!d.configured,
+        mode: d.configured ? 'login' : 'setup',
+        adminTokens: d.admin_tokens || [],
+        configuredTokens: d.configured_tokens || [],
+      })))
       .catch(() => {});
 
     const remembered = normalizeToken(sessionStorage.getItem('portalUserToken') || '');
@@ -790,18 +798,25 @@ function App() {
   }
 
   async function doAdminAuth() {
+    const tokenVal = (admin.token || '').trim().toUpperCase();
+    if (!tokenVal) {
+      setAdmin(s => ({ ...s, error: 'Select or enter your admin token' }));
+      return;
+    }
     setAdmin(s => ({ ...s, error: '', loading: true }));
     try {
       if (admin.mode === 'setup') {
         if (!admin.credential || admin.credential !== admin.confirm) throw new Error('Credentials do not match');
-        const data = await API.adminAuthSetup(admin.credential, admin.current || undefined);
+        const data = await API.adminAuthSetup(tokenVal, admin.credential, admin.current || undefined);
         sessionStorage.setItem('adminSession', data.session);
-        setAdmin(s => ({ ...s, session: data.session, loading: false, configured: true, mode: 'login', credential: '', current: '', confirm: '' }));
+        sessionStorage.setItem('adminWho', data.who || tokenVal);
+        setAdmin(s => ({ ...s, session: data.session, who: data.who || tokenVal, loading: false, configured: true, mode: 'login', token: '', credential: '', current: '', confirm: '' }));
         await loadAdminData(data.session);
       } else {
-        const data = await API.adminAuthLogin(admin.credential);
+        const data = await API.adminAuthLogin(tokenVal, admin.credential);
         sessionStorage.setItem('adminSession', data.session);
-        setAdmin(s => ({ ...s, session: data.session, loading: false, credential: '' }));
+        sessionStorage.setItem('adminWho', data.who || tokenVal);
+        setAdmin(s => ({ ...s, session: data.session, who: data.who || tokenVal, loading: false, token: '', credential: '' }));
         await loadAdminData(data.session);
       }
     } catch (e) {
@@ -809,21 +824,36 @@ function App() {
     }
   }
 
+  function clearAdminSession(msg = '') {
+    sessionStorage.removeItem('adminSession');
+    sessionStorage.removeItem('adminWho');
+    setAdmin(s => ({ ...s, session: '', who: '', data: null, error: msg, loading: false }));
+  }
+
+  function isExpiredError(e) {
+    return e && e.status === 401;
+  }
+
   async function loadAdminData(session = admin.session) {
     if (!session) return false;
     setAdmin(s => ({ ...s, loading: true, error: '' }));
     try {
+      const rethrow401 = fallback => e => { if (isExpiredError(e)) throw e; return fallback; };
       const [wizard, queue, users, log, config] = await Promise.all([
         API.adminWizard(session),
-        API.adminQueue(session).catch(() => ({ queue: [] })),
-        API.adminUsers(session).catch(() => ({ count: 0 })),
-        API.adminLog(session).catch(() => ({ total: 0, entries: [] })),
-        API.adminConfig(session).catch(() => ({ admin_tokens: ['JPR','AMD','SCH'] })),
+        API.adminQueue(session).catch(rethrow401({ queue: [] })),
+        API.adminUsers(session).catch(rethrow401({ count: 0 })),
+        API.adminLog(session).catch(rethrow401({ total: 0, entries: [] })),
+        API.adminConfig(session).catch(rethrow401({ admin_tokens: ['JPR','AMD','SCH'] })),
       ]);
       const mergedUsers = mergeAdminUsers(wizard.users || [], users.users || []);
       setAdmin(s => ({ ...s, data: { users: mergedUsers, queue: queue.queue || [], log: log.entries || [], logTotal: log.total || 0, userCount: users.count || 0 }, configTokens: (config.admin_tokens || []).join(', '), loading: false }));
       return true;
     } catch (e) {
+      if (isExpiredError(e)) {
+        clearAdminSession('Your admin session expired. Please log in again.');
+        return false;
+      }
       setAdmin(s => ({ ...s, error: e.message, loading: false }));
       return false;
     }
@@ -833,9 +863,14 @@ function App() {
     const current = admin.data?.users?.find(u => u.token === token);
     const completed = new Set(current?.adminCompleted || []);
     if (completed.has(stepId)) completed.delete(stepId); else completed.add(stepId);
-    await API.saveWizard({ ...current, token, adminCompleted: [...completed] }, { headers: { 'X-Admin-Session': admin.session } });
-    try { await API.notifyAdminTask({ token, step_id: stepId, action: completed.has(stepId) ? 'done' : 'undone' }); } catch {}
-    await loadAdminData();
+    try {
+      await API.saveWizard({ ...current, token, adminCompleted: [...completed] }, { headers: { 'X-Admin-Session': admin.session } });
+      try { await API.notifyAdminTask({ token, step_id: stepId, action: completed.has(stepId) ? 'done' : 'undone' }); } catch {}
+      await loadAdminData();
+    } catch (e) {
+      if (isExpiredError(e)) { clearAdminSession('Your admin session expired. Please log in again.'); return; }
+      setAdmin(s => ({ ...s, error: e.message }));
+    }
   }
 
   async function saveConfig() {
@@ -857,6 +892,7 @@ function App() {
       }));
       return true;
     } catch (e) {
+      if (isExpiredError(e)) { clearAdminSession('Your admin session expired. Please log in again.'); return false; }
       setAdmin(s => ({
         ...s,
         loading: false,
@@ -868,8 +904,7 @@ function App() {
 
   async function logoutAdmin() {
     try { await API.adminAuthLogout(admin.session); } catch {}
-    sessionStorage.removeItem('adminSession');
-    setAdmin(s => ({ ...s, session: '', data: null }));
+    clearAdminSession();
   }
 
   function openAdminFromLogin() {
@@ -1627,20 +1662,32 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
   }, [admin.session]);
 
   if (!admin.session) {
+    const availableTokens = admin.mode === 'setup' ? admin.adminTokens : admin.configuredTokens;
     return (
       <div className="auth-wrap">
         <div className="card main-panel" style={{ minWidth: 0, overflow: "hidden", width: "100%" }}>
           <div className="eyebrow">// Admin access</div>
           <h1 className="h1">{admin.mode === 'setup' ? 'Set admin credential' : 'Admin login'}</h1>
-          <div className="sub">Use a password or 4-digit PIN. This is shared for portal admins.</div>
+          <div className="sub">{admin.mode === 'setup' ? 'Set a personal password for your admin token.' : 'Log in with your admin token and personal password.'}</div>
           <div className="form-grid" style={{ marginTop: 18 }}>
-            {admin.mode === 'setup' && admin.configured && <div className="field"><label>Current credential</label><input type="password" value={admin.current} onChange={e => setAdmin(s => ({ ...s, current: e.target.value }))} /></div>}
-            <div className="field"><label>{admin.mode === 'setup' ? 'New credential' : 'Credential'}</label><input type="password" value={admin.credential} onChange={e => setAdmin(s => ({ ...s, credential: e.target.value }))} /></div>
-            {admin.mode === 'setup' && <div className="field"><label>Confirm credential</label><input type="password" value={admin.confirm} onChange={e => setAdmin(s => ({ ...s, confirm: e.target.value }))} /></div>}
+            <div className="field">
+              <label>Your admin token</label>
+              {availableTokens.length > 0
+                ? <select value={admin.token} onChange={e => setAdmin(s => ({ ...s, token: e.target.value }))}>
+                    <option value="">— select —</option>
+                    {availableTokens.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                : <input type="text" placeholder="e.g. JPR" value={admin.token} onChange={e => setAdmin(s => ({ ...s, token: e.target.value.toUpperCase() }))} />}
+            </div>
+            {admin.mode === 'setup' && admin.configured && admin.configuredTokens.includes((admin.token || '').toUpperCase()) && (
+              <div className="field"><label>Current password</label><input type="password" value={admin.current} onChange={e => setAdmin(s => ({ ...s, current: e.target.value }))} /></div>
+            )}
+            <div className="field"><label>{admin.mode === 'setup' ? 'New password' : 'Password'}</label><input type="password" value={admin.credential} onChange={e => setAdmin(s => ({ ...s, credential: e.target.value }))} onKeyDown={e => e.key === 'Enter' && doAdminAuth()} /></div>
+            {admin.mode === 'setup' && <div className="field"><label>Confirm password</label><input type="password" value={admin.confirm} onChange={e => setAdmin(s => ({ ...s, confirm: e.target.value }))} /></div>}
             {admin.error && <div className="error-box">{admin.error}</div>}
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <button className="btn btn-primary" disabled={admin.loading} onClick={doAdminAuth}>{admin.loading ? 'Working…' : admin.mode === 'setup' ? 'Save credential' : 'Login'}</button>
-              <button className="btn btn-secondary" onClick={() => setAdmin(s => ({ ...s, mode: s.mode === 'setup' ? 'login' : 'setup', error: '' }))}>{admin.mode === 'setup' ? 'Use login' : 'Change credential'}</button>
+              <button className="btn btn-secondary" onClick={() => setAdmin(s => ({ ...s, mode: s.mode === 'setup' ? 'login' : 'setup', error: '' }))}>{admin.mode === 'setup' ? 'Use login' : 'Set / change my password'}</button>
             </div>
           </div>
         </div>
@@ -1707,6 +1754,7 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
         setUsersUpload(current => current.error ? current : { ...current, message: '' });
       }, 3500);
     } catch (e) {
+      if (isExpiredError(e)) { clearAdminSession('Your admin session expired. Please log in again.'); return; }
       setUsersUpload({ busy: false, message: '', error: e.message || 'Upload failed' });
     }
   }
@@ -1736,7 +1784,7 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
         <div className="card main-panel">
           <div className="hero-row">
             <div>
-              <div className="eyebrow">// Admin dashboard</div>
+              <div className="eyebrow">// Admin dashboard{admin.who ? ` · ${admin.who}` : ''}</div>
               <h1 className="h1">{adminTab === 'wizard' ? 'RTA Wizard Progress' : 'OTP Log'}</h1>
               <div className="sub">{adminTab === 'wizard' ? 'Users, credentials, progress, and next admin-owned step in one view.' : 'Filter and search the relay log by token, category, and status.'}</div>
             </div>

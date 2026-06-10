@@ -216,7 +216,7 @@ AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
 ADMIN_TTL_SECONDS = 8 * 60 * 60
-ADMIN_SESSIONS: Dict[str, float] = {}
+ADMIN_SESSIONS: Dict[str, Dict[str, Any]] = {}  # session → {"ts": float, "who": str}
 ADMIN_LOGIN_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
 ADMIN_LOGIN_WINDOW_SECONDS = int(os.getenv("ADMIN_LOGIN_WINDOW_SECONDS", "300"))
 ADMIN_LOGIN_MAX_ATTEMPTS = int(os.getenv("ADMIN_LOGIN_MAX_ATTEMPTS", "8"))
@@ -558,21 +558,21 @@ def _purge_admin_sessions() -> None:
         return
 
     now_ts = datetime.now(timezone.utc).timestamp()
-    stale = [session for session, ts in ADMIN_SESSIONS.items() if now_ts - ts > ADMIN_TTL_SECONDS]
+    stale = [s for s, meta in ADMIN_SESSIONS.items() if now_ts - float(meta.get("ts", 0)) > ADMIN_TTL_SECONDS]
     for session in stale:
         ADMIN_SESSIONS.pop(session, None)
 
 
-def _create_admin_session() -> str:
+def _create_admin_session(who: str) -> str:
     session = secrets.token_urlsafe(24)
     now_ts = datetime.now(timezone.utc).timestamp()
+    meta = {"ts": now_ts, "who": who}
 
-    # Keep the local copy as a fallback while REDIS_REQUIRED=0.
-    ADMIN_SESSIONS[session] = now_ts
+    ADMIN_SESSIONS[session] = meta
 
     if _use_redis_state():
         try:
-            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, str(now_ts))
+            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, json.dumps(meta))
         except Exception as exc:
             if REDIS_REQUIRED:
                 raise HTTPException(status_code=503, detail="Redis admin session store is unavailable") from exc
@@ -593,7 +593,8 @@ def _delete_admin_session(session: str) -> None:
             logger.warning("Could not delete admin session from Redis: %s", exc)
 
 
-def _require_admin(session: Optional[str]) -> None:
+def _require_admin(session: Optional[str]) -> str:
+    """Validate admin session and return the admin token (who) associated with it."""
     if not session:
         raise HTTPException(status_code=401, detail="Missing admin session")
 
@@ -601,14 +602,20 @@ def _require_admin(session: Optional[str]) -> None:
 
     if _use_redis_state():
         try:
-            existing = redis_client.get(_redis_admin_session_key(session))
-            if not existing:
-                raise HTTPException(status_code=401, detail="Invalid admin session")
+            raw = redis_client.get(_redis_admin_session_key(session))
+            if not raw:
+                raise HTTPException(status_code=401, detail="Invalid or expired admin session")
+
+            try:
+                meta = json.loads(raw)
+            except Exception:
+                meta = {"ts": float(raw), "who": "unknown"}
 
             # Sliding expiration: every valid admin request refreshes the session TTL.
-            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, str(now_ts))
-            ADMIN_SESSIONS[session] = now_ts
-            return
+            meta["ts"] = now_ts
+            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, json.dumps(meta))
+            ADMIN_SESSIONS[session] = meta
+            return str(meta.get("who", "unknown"))
         except HTTPException:
             raise
         except Exception as exc:
@@ -617,10 +624,11 @@ def _require_admin(session: Optional[str]) -> None:
             logger.warning("Could not validate admin session in Redis; using in-memory fallback: %s", exc)
 
     _purge_admin_sessions()
-    ts = ADMIN_SESSIONS.get(session)
-    if not ts:
-        raise HTTPException(status_code=401, detail="Invalid admin session")
-    ADMIN_SESSIONS[session] = now_ts
+    meta = ADMIN_SESSIONS.get(session)
+    if not meta:
+        raise HTTPException(status_code=401, detail="Invalid or expired admin session")
+    meta["ts"] = now_ts
+    return str(meta.get("who", "unknown"))
 
 
 def _model_dump(model: BaseModel) -> Dict[str, Any]:
@@ -792,6 +800,7 @@ class UserLoginPayload(BaseModel):
 
 
 class CredentialPayload(BaseModel):
+    token: Optional[str] = None
     credential: str
     current: Optional[str] = None
 
@@ -1431,51 +1440,100 @@ async def reload_users(x_admin_session: Optional[str] = Header(default=None)):
 
 
 # -- Wizard/admin server-backed endpoints -------------------------------------
+def _auth_hashes(db: Dict[str, Any]) -> Dict[str, str]:
+    """Return the per-user hash map, migrating from the legacy single-hash format if needed."""
+    if "hashes" in db:
+        return dict(db["hashes"])
+    # Legacy: single shared password_hash — migrate to a map under the sentinel key "admin"
+    if db.get("password_hash"):
+        return {"admin": db["password_hash"]}
+    return {}
+
+
 @app.get("/admin/auth/status")
 async def admin_auth_status():
-    return {"configured": bool(_auth_db().get("password_hash"))}
+    db = _auth_db()
+    hashes = _auth_hashes(db)
+    admin_tokens = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    configured_tokens = [t for t in admin_tokens if t in hashes]
+    return {
+        "configured": bool(hashes),
+        "configured_tokens": configured_tokens,
+        "admin_tokens": admin_tokens,
+    }
 
 
 @app.post("/admin/auth/setup")
 async def admin_auth_setup(payload: CredentialPayload):
+    who = (payload.token or "").strip().upper()
     cred = (payload.credential or "").strip()
     if len(cred) < 4:
-        raise HTTPException(status_code=400, detail="Credential too short")
+        raise HTTPException(status_code=400, detail="Credential too short (minimum 4 characters)")
+
+    cfg = _config_db()
+    admin_tokens = cfg.get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+
+    if not who or who not in admin_tokens:
+        raise HTTPException(status_code=403, detail="Token is not in the admin tokens list")
+
     db = _auth_db()
-    if db.get("password_hash"):
+    hashes = _auth_hashes(db)
+
+    if who in hashes:
         if not payload.current:
-            raise HTTPException(status_code=400, detail="Current credential required")
-        if not bcrypt.checkpw(payload.current.encode("utf-8"), db["password_hash"].encode("utf-8")):
+            raise HTTPException(status_code=400, detail="Current credential required to change password")
+        if not bcrypt.checkpw(payload.current.encode("utf-8"), hashes[who].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Current credential incorrect")
-    hashed = bcrypt.hashpw(cred.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    _save_auth_db({"password_hash": hashed, "updated_at": _now_iso()})
-    session = _create_admin_session()
-    audit("admin_auth_setup", detail="Admin credential configured")
-    return {"status": "ok", "session": session}
+
+    hashes[who] = bcrypt.hashpw(cred.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+    session = _create_admin_session(who)
+    audit("admin_auth_setup", detail=f"Admin credential set for {who}")
+    return {"status": "ok", "session": session, "who": who}
 
 
 @app.post("/admin/auth/login")
 async def admin_auth_login(payload: CredentialPayload, request: Request):
     _check_login_rate_limit(request)
 
+    who = (payload.token or "").strip().upper()
+    if not who:
+        raise HTTPException(status_code=400, detail="Token required")
+
     db = _auth_db()
-    stored = db.get("password_hash")
+    hashes = _auth_hashes(db)
+
+    # Generic error message — do not reveal whether the token exists or not
+    _invalid = HTTPException(status_code=401, detail="Invalid token or credential")
+
+    stored = hashes.get(who)
     if not stored:
-        raise HTTPException(status_code=400, detail="Admin credential not configured")
+        _record_login_failure(request)
+        audit("admin_auth_failed", detail=f"Login attempt for unconfigured token {who}", status="warn")
+        raise _invalid
+
     if not bcrypt.checkpw((payload.credential or "").encode("utf-8"), stored.encode("utf-8")):
         _record_login_failure(request)
-        audit("admin_auth_failed", detail="Incorrect admin credential", status="warn")
-        raise HTTPException(status_code=401, detail="Incorrect credential")
+        audit("admin_auth_failed", detail=f"Incorrect credential for {who}", status="warn")
+        raise _invalid
+
     _record_login_success(request)
-    session = _create_admin_session()
-    audit("admin_auth_login", detail="Admin session opened")
-    return {"status": "ok", "session": session}
+    session = _create_admin_session(who)
+    audit("admin_auth_login", detail=f"Admin session opened for {who}")
+    return {"status": "ok", "session": session, "who": who}
 
 
 @app.post("/admin/auth/logout")
 async def admin_auth_logout(x_admin_session: Optional[str] = Header(default=None)):
     if x_admin_session:
+        # Retrieve who before deleting so we can audit it
+        try:
+            meta = ADMIN_SESSIONS.get(x_admin_session, {})
+            who = meta.get("who", "unknown") if isinstance(meta, dict) else "unknown"
+        except Exception:
+            who = "unknown"
         _delete_admin_session(x_admin_session)
+        audit("admin_auth_logout", detail=f"Admin session closed for {who}")
     return {"status": "ok"}
 
 
