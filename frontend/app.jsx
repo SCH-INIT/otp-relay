@@ -73,16 +73,24 @@ const API = {
   claimOtp(token) { return this.json('/claim-otp', { method: 'POST', body: JSON.stringify({ token }) }); },
   claimStatus(token) { return this.json(`/claim-status/${encodeURIComponent(token)}`); },
   deleteClaim(token) { return this.json(`/claim-otp/${encodeURIComponent(token)}`, { method: 'DELETE' }); },
-  userLogin(token) { return this.json('/user/login', { method: 'POST', body: JSON.stringify({ token }) }); },
   saveWizard(payload, options = {}) {
     const headers = { 'X-Wizard-Client': wizardClientSecret(), ...(options.headers || {}) };
     return this.json('/wizard/progress', { method: 'POST', headers, body: JSON.stringify(payload) });
   },
   getWizard(token) { return this.json(`/wizard/progress/${encodeURIComponent(token)}`, { headers: { 'X-Wizard-Client': wizardClientSecret() } }); },
   adminAuthStatus() { return this.json('/admin/auth/status'); },
+  userLogin(token, pin, confirmPin, adminSession) {
+    const body = { token };
+    if (pin) body.pin = pin;
+    if (confirmPin) body.confirm_pin = confirmPin;
+    if (adminSession) body.admin_session = adminSession;
+    return this.json('/user/login', { method: 'POST', body: JSON.stringify(body) });
+  },
   adminAuthSetup(token, credential, current) { return this.json('/admin/auth/setup', { method: 'POST', body: JSON.stringify({ token, credential, current }) }); },
-  adminAuthLogin(token, credential) { return this.json('/admin/auth/login', { method: 'POST', body: JSON.stringify({ token, credential }) }); },
   adminAuthLogout(session) { return this.json('/admin/auth/logout', { method: 'POST', headers: { 'X-Admin-Session': session } }); },
+  adminResetRequest(token) { return this.json('/admin/auth/reset-request', { method: 'POST', body: JSON.stringify({ token }) }); },
+  adminResetConfirm(token, code) { return this.json('/admin/auth/reset-confirm', { method: 'POST', body: JSON.stringify({ token, credential: code }) }); },
+  adminResetPeer(session, token) { return this.json('/admin/auth/reset-peer', { method: 'POST', headers: { 'X-Admin-Session': session }, body: JSON.stringify({ token }) }); },
   adminWizard(session) { return this.json('/admin/wizard', { headers: { 'X-Admin-Session': session } }); },
   adminQueue(session) { return this.json('/admin/queue', { headers: session ? { 'X-Admin-Session': session } : {} }); },
   adminUsers(session) { return this.json('/admin/users', { headers: session ? { 'X-Admin-Session': session } : {} }); },
@@ -579,40 +587,62 @@ function exportWizardProgressPdf(sourceUsers) {
 function App() {
   const [view, setView] = useState('otp');
   const [currentUser, setCurrentUser] = useState(null);
-  const [login, setLogin] = useState({ tokenChars: ['', '', ''], error: '' });
+  const [login, setLogin] = useState({ tokenChars: ['', '', ''], error: '', loading: false, pin: '', confirmPin: '', resetMode: false, resetCode: '', resetSent: false, resetSuccess: false });
   const [wizardUser, setWizardUser] = useState(emptyWizardUser());
   const [wizardStatus, setWizardStatus] = useState({ saving: false, message: '' });
   const wizardSaveTimer = React.useRef(null);
   const [openStep, setOpenStep] = useState(null);
   const [faqOpen, setFaqOpen] = useState({});
   const [otp, setOtp] = useState({ panel: 'claim', message: '', position: 1, waitEstimate: 0, queueDepth: 0, otpValue: '———', activeRemaining: CONFIG.CLAIM_EXPIRY_SEC, otpRemaining: CONFIG.OTP_DISPLAY_SEC, token: '' });
-  const [admin, setAdmin] = useState({ session: sessionStorage.getItem('adminSession') || '', who: sessionStorage.getItem('adminWho') || '', configured: false, mode: 'login', error: '', token: '', credential: '', current: '', confirm: '', data: null, loading: false, configTokens: 'JPR, AMD, SCH', adminTokens: [], configuredTokens: [] });
+  const [admin, setAdmin] = useState({ session: sessionStorage.getItem('adminSession') || '', who: sessionStorage.getItem('adminWho') || '', configured: false, error: '', data: null, loading: false, configTokens: 'JPR, AMD, SCH', adminTokens: [], configuredTokens: [] });
 
   useEffect(() => {
     API.adminAuthStatus()
       .then(d => setAdmin(s => ({
         ...s,
         configured: !!d.configured,
-        mode: d.configured ? 'login' : 'setup',
         adminTokens: d.admin_tokens || [],
         configuredTokens: d.configured_tokens || [],
       })))
       .catch(() => {});
 
     const remembered = normalizeToken(sessionStorage.getItem('portalUserToken') || '');
+    const existingAdminSession = sessionStorage.getItem('adminSession') || '';
     if (remembered) {
-      API.userLogin(remembered)
+      API.userLogin(remembered, undefined, undefined, existingAdminSession || undefined)
         .then(found => {
-          setCurrentUser({
-            token: normalizeToken(found.token),
-            name: found.name || '',
-            email: found.email || '',
-          });
-          setOtp(s => ({ ...s, token: normalizeToken(found.token) }));
+          if (found.requires_pin) {
+            // Admin token but session expired — require fresh login with PIN
+            sessionStorage.removeItem('portalUserToken');
+            sessionStorage.removeItem('adminSession');
+            sessionStorage.removeItem('adminWho');
+            setAdmin(s => ({ ...s, session: '', who: '' }));
+            return;
+          }
+          const cleanToken = normalizeToken(found.token);
+          sessionStorage.setItem('portalUserToken', cleanToken);
+          setCurrentUser({ token: cleanToken, name: found.name || '', email: found.email || '' });
+          setOtp(s => ({ ...s, token: cleanToken }));
+          if (found.admin_session) {
+            sessionStorage.setItem('adminSession', found.admin_session);
+            sessionStorage.setItem('adminWho', cleanToken);
+            setAdmin(s => ({ ...s, session: found.admin_session, who: cleanToken }));
+          } else if (existingAdminSession) {
+            sessionStorage.removeItem('adminSession');
+            sessionStorage.removeItem('adminWho');
+            setAdmin(s => ({ ...s, session: '', who: '' }));
+          }
         })
         .catch(() => {
           sessionStorage.removeItem('portalUserToken');
+          sessionStorage.removeItem('adminSession');
+          sessionStorage.removeItem('adminWho');
         });
+    } else if (existingAdminSession) {
+      // Stale admin session with no user — clear it
+      sessionStorage.removeItem('adminSession');
+      sessionStorage.removeItem('adminWho');
+      setAdmin(s => ({ ...s, session: '', who: '' }));
     }
   }, []);
 
@@ -797,37 +827,19 @@ function App() {
     }
   }
 
-  async function doAdminAuth() {
-    const tokenVal = (admin.token || '').trim().toUpperCase();
-    if (!tokenVal) {
-      setAdmin(s => ({ ...s, error: 'Select or enter your admin token' }));
-      return;
-    }
-    setAdmin(s => ({ ...s, error: '', loading: true }));
-    try {
-      if (admin.mode === 'setup') {
-        if (!admin.credential || admin.credential !== admin.confirm) throw new Error('Credentials do not match');
-        const data = await API.adminAuthSetup(tokenVal, admin.credential, admin.current || undefined);
-        sessionStorage.setItem('adminSession', data.session);
-        sessionStorage.setItem('adminWho', data.who || tokenVal);
-        setAdmin(s => ({ ...s, session: data.session, who: data.who || tokenVal, loading: false, configured: true, mode: 'login', token: '', credential: '', current: '', confirm: '' }));
-        await loadAdminData(data.session);
-      } else {
-        const data = await API.adminAuthLogin(tokenVal, admin.credential);
-        sessionStorage.setItem('adminSession', data.session);
-        sessionStorage.setItem('adminWho', data.who || tokenVal);
-        setAdmin(s => ({ ...s, session: data.session, who: data.who || tokenVal, loading: false, token: '', credential: '' }));
-        await loadAdminData(data.session);
-      }
-    } catch (e) {
-      setAdmin(s => ({ ...s, error: e.message, loading: false }));
-    }
-  }
+  const emptyLogin = (msg = '') => ({ tokenChars: ['', '', ''], error: msg, loading: false, pin: '', confirmPin: '', resetMode: false, resetCode: '', resetSent: false, resetSuccess: false });
 
   function clearAdminSession(msg = '') {
+    // Admin and user sessions are unified — expiry logs the user out entirely
     sessionStorage.removeItem('adminSession');
     sessionStorage.removeItem('adminWho');
-    setAdmin(s => ({ ...s, session: '', who: '', data: null, error: msg, loading: false }));
+    sessionStorage.removeItem('portalUserToken');
+    setAdmin(s => ({ ...s, session: '', who: '', data: null, error: '', loading: false }));
+    setCurrentUser(null);
+    setWizardUser(emptyWizardUser());
+    setOpenStep(null);
+    setView('otp');
+    setLogin(emptyLogin(msg));
   }
 
   function isExpiredError(e) {
@@ -902,14 +914,59 @@ function App() {
     }
   }
 
-  async function logoutAdmin() {
-    try { await API.adminAuthLogout(admin.session); } catch {}
-    clearAdminSession();
+  async function requestPinReset(token) {
+    setLogin(s => ({ ...s, resetMode: true, resetSent: false, resetCode: '', error: '' }));
+    try {
+      await API.adminResetRequest(token);
+      setLogin(s => ({ ...s, resetSent: true }));
+    } catch (e) {
+      setLogin(s => ({ ...s, resetMode: false, error: e.message || 'Reset request failed — check Telegram is configured' }));
+    }
   }
 
-  function openAdminFromLogin() {
-    setView('admin');
-    if (admin.session && !admin.data) loadAdminData(admin.session);
+  async function confirmPinReset(token, code) {
+    if (!code || code.replace('-', '').length < 5) {
+      setLogin(s => ({ ...s, error: 'Enter the full reset code from Telegram' }));
+      return;
+    }
+    setLogin(s => ({ ...s, loading: true, error: '' }));
+    try {
+      await API.adminResetConfirm(token, code);
+      // Refresh configured tokens so setup mode triggers correctly
+      const status = await API.adminAuthStatus().catch(() => null);
+      if (status) setAdmin(s => ({ ...s, configured: !!status.configured, adminTokens: status.admin_tokens || s.adminTokens, configuredTokens: status.configured_tokens || [] }));
+      setLogin(s => ({ ...s, loading: false, resetMode: false, resetSent: false, resetCode: '', resetSuccess: true, error: '', pin: '', confirmPin: '' }));
+    } catch (e) {
+      setLogin(s => ({ ...s, loading: false, error: e.message || 'Invalid reset code' }));
+    }
+  }
+
+  async function adminResetPeer(targetToken) {
+    try {
+      await API.adminResetPeer(admin.session, targetToken);
+      const status = await API.adminAuthStatus().catch(() => null);
+      if (status) setAdmin(s => ({ ...s, configuredTokens: status.configured_tokens || [] }));
+      return { success: true };
+    } catch (e) {
+      if (isExpiredError(e)) { clearAdminSession('Session expired — please log in again'); return { success: false }; }
+      return { success: false, error: e.message };
+    }
+  }
+
+  async function adminChangePIN(currentPin, newPin, confirmPin) {
+    if (newPin !== confirmPin) return { success: false, error: 'PINs do not match 🙈' };
+    if (newPin.length < 4) return { success: false, error: 'PIN too short — 4 characters minimum' };
+    try {
+      const data = await API.adminAuthSetup(admin.who, newPin, currentPin);
+      if (data.session) {
+        sessionStorage.setItem('adminSession', data.session);
+        setAdmin(s => ({ ...s, session: data.session }));
+      }
+      return { success: true };
+    } catch (e) {
+      if (isExpiredError(e)) { clearAdminSession('Session expired — please log in again'); return { success: false }; }
+      return { success: false, error: e.message };
+    }
   }
 
 
@@ -919,30 +976,52 @@ function App() {
       setLogin(s => ({ ...s, error: 'Enter a valid 2–3 character token.' }));
       return;
     }
-
+    const isAdminToken = admin.adminTokens.includes(token);
+    if (isAdminToken && !login.pin) {
+      setLogin(s => ({ ...s, error: 'Enter your admin PIN 🔐' }));
+      return;
+    }
+    setLogin(s => ({ ...s, loading: true, error: '' }));
     try {
-      const found = await API.userLogin(token);
+      const found = await API.userLogin(
+        token,
+        login.pin || undefined,
+        login.confirmPin || undefined,
+      );
+      if (found.requires_pin) {
+        // Backend told us PIN is needed (e.g. adminTokens not yet loaded on frontend)
+        setAdmin(s => ({ ...s, adminTokens: [...new Set([...s.adminTokens, token])] }));
+        setLogin(s => ({ ...s, loading: false, error: '' }));
+        return;
+      }
       const cleanToken = normalizeToken(found.token);
       sessionStorage.setItem('portalUserToken', cleanToken);
-      setCurrentUser({
-        token: cleanToken,
-        name: found.name || '',
-        email: found.email || '',
-      });
+      if (found.admin_session) {
+        sessionStorage.setItem('adminSession', found.admin_session);
+        sessionStorage.setItem('adminWho', cleanToken);
+        setAdmin(s => ({ ...s, session: found.admin_session, who: cleanToken, error: '' }));
+        loadAdminData(found.admin_session);
+      }
+      setCurrentUser({ token: cleanToken, name: found.name || '', email: found.email || '' });
       setOtp(s => ({ ...s, token: cleanToken }));
+      setLogin(emptyLogin());
     } catch (e) {
-      setLogin(s => ({ ...s, error: e.message || 'Token not recognised. Check with IT.' }));
+      setLogin(s => ({ ...s, loading: false, error: e.message || 'Login failed — check your token and PIN' }));
     }
   }
 
   function logoutUser() {
+    try { if (admin.session) API.adminAuthLogout(admin.session); } catch {}
     sessionStorage.removeItem('portalUserToken');
+    sessionStorage.removeItem('adminSession');
+    sessionStorage.removeItem('adminWho');
     setCurrentUser(null);
     setWizardUser(emptyWizardUser());
     setOpenStep(null);
     setView('otp');
     setOtp({ panel: 'claim', message: '', position: 1, waitEstimate: 0, queueDepth: 0, otpValue: '———', activeRemaining: CONFIG.CLAIM_EXPIRY_SEC, otpRemaining: CONFIG.OTP_DISPLAY_SEC, token: '' });
-    setLogin({ tokenChars: ['', '', ''], error: '' });
+    setAdmin(s => ({ ...s, session: '', who: '', data: null }));
+    setLogin(emptyLogin());
   }
 
   const otpSidebarTitleStyle = { fontSize: 14, fontWeight: 800, letterSpacing: '.11em' };
@@ -971,26 +1050,8 @@ function App() {
     </div>
   );
 
-  if (!currentUser && view === 'admin') {
-    return (
-      <>
-        <header className="topbar">
-          <div className="topbar-left"><Logo /><span className="topbar-title">OTP Portal</span></div>
-          <div className="topbar-right">
-            <span className="nav-pill active">Admin</span>
-            <button className="btn btn-secondary" onClick={() => setView('otp')}>User login</button>
-            {admin.session && <button className="btn btn-secondary" onClick={logoutAdmin}>Admin logout</button>}
-          </div>
-        </header>
-        <main className="app-shell">
-          <AdminView admin={admin} setAdmin={setAdmin} doAdminAuth={doAdminAuth} loadAdminData={loadAdminData} toggleAdminStep={toggleAdminStep} pendingAdminTasks={pendingAdminTasks} saveConfig={saveConfig} />
-        </main>
-      </>
-    );
-  }
-
   if (!currentUser) {
-    return <LoginGate login={login} setLogin={setLogin} submitLogin={submitLogin} openAdmin={openAdminFromLogin} />;
+    return <LoginGate login={login} setLogin={setLogin} submitLogin={submitLogin} admin={admin} requestPinReset={requestPinReset} confirmPinReset={confirmPinReset} />;
   }
 
   return (
@@ -999,31 +1060,40 @@ function App() {
         <div className="topbar-left"><Logo /><span className="topbar-title">OTP Portal</span></div>
         <div className="topbar-right">
           <span className="nav-pill active">{currentUser.token}</span>
-          {['otp', 'wizard', 'admin'].map(v => (
+          {['otp', 'wizard', ...(admin.session ? ['admin'] : [])].map(v => (
             <span key={v} className={`nav-pill ${view === v ? 'active' : ''}`} onClick={() => {
               setView(v);
               if (v === 'admin' && admin.session && !admin.data) loadAdminData();
             }}>{v === 'otp' ? 'OTP' : v === 'wizard' ? 'RTA Wizard' : 'Admin'}</span>
           ))}
           <button className="btn btn-secondary" onClick={logoutUser}>Logout</button>
-          {admin.session && view === 'admin' && <button className="btn btn-secondary" onClick={logoutAdmin}>Admin logout</button>}
         </div>
       </header>
       <main className="app-shell">
         {view === 'otp' && <OtpView otp={otp} claimOtp={claimOtp} retryOtp={retryOtp} resetClaim={resetClaim} sidebar={sharedSidebar} currentUser={currentUser} />}
         {view === 'wizard' && <WizardView user={wizardUser} saveWizard={saveWizard} saveWizardDebounced={saveWizardDebounced} wizardStatus={wizardStatus} openStep={openStep} setOpenStep={setOpenStep} doneCount={doneCount} progressPct={progressPct} nextStep={nextStep} toggleStep={toggleStep} />}
-        {view === 'admin' && <AdminView admin={admin} setAdmin={setAdmin} doAdminAuth={doAdminAuth} loadAdminData={loadAdminData} toggleAdminStep={toggleAdminStep} pendingAdminTasks={pendingAdminTasks} saveConfig={saveConfig} />}
+        {view === 'admin' && <AdminView admin={admin} setAdmin={setAdmin} loadAdminData={loadAdminData} toggleAdminStep={toggleAdminStep} pendingAdminTasks={pendingAdminTasks} saveConfig={saveConfig} adminResetPeer={adminResetPeer} adminChangePIN={adminChangePIN} />}
       </main>
     </>
   );
 }
 
-function LoginGate({ login, setLogin, submitLogin, openAdmin }) {
+function LoginGate({ login, setLogin, submitLogin, admin, requestPinReset, confirmPinReset }) {
   const inputRefs = React.useRef([]);
-  const token = login.tokenChars.join('');
-  const disabled = token.trim().length < 2;
+  const pinRef = React.useRef(null);
+  const token = normalizeToken(login.tokenChars.join(''));
+  const isAdminToken = token.length >= 2 && admin.adminTokens.includes(token);
+  const needsSetup = isAdminToken && (!admin.configuredTokens.includes(token) || login.resetSuccess);
+  const showPin = isAdminToken;
+  const canSubmit = token.length >= 2 && (!showPin || (login.pin && !login.resetMode));
+
+  // Auto-focus PIN field the moment it appears
+  useEffect(() => {
+    if (showPin && !login.resetMode) requestAnimationFrame(() => pinRef.current?.focus());
+  }, [showPin]);
 
   function onChar(i, value) {
+    if (showPin) return; // token locked once admin detected
     const v = (value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(-1);
     const next = [...login.tokenChars];
     next[i] = v;
@@ -1032,27 +1102,18 @@ function LoginGate({ login, setLogin, submitLogin, openAdmin }) {
   }
 
   function onKeyDown(i, e) {
+    if (showPin) return;
     if (e.key === 'Backspace' && !login.tokenChars[i] && i > 0) {
       requestAnimationFrame(() => inputRefs.current[i - 1]?.focus());
       return;
     }
-    if (e.key === 'ArrowLeft' && i > 0) {
-      e.preventDefault();
-      inputRefs.current[i - 1]?.focus();
-      return;
-    }
-    if (e.key === 'ArrowRight' && i < 2) {
-      e.preventDefault();
-      inputRefs.current[i + 1]?.focus();
-      return;
-    }
-    if (e.key === 'Enter' && !disabled) {
-      e.preventDefault();
-      submitLogin();
-    }
+    if (e.key === 'ArrowLeft' && i > 0) { e.preventDefault(); inputRefs.current[i - 1]?.focus(); return; }
+    if (e.key === 'ArrowRight' && i < 2) { e.preventDefault(); inputRefs.current[i + 1]?.focus(); return; }
+    if (e.key === 'Enter' && canSubmit) { e.preventDefault(); submitLogin(); }
   }
 
   function onPaste(e) {
+    if (showPin) return;
     e.preventDefault();
     const paste = (e.clipboardData.getData('text') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
     const next = ['', '', ''];
@@ -1061,18 +1122,36 @@ function LoginGate({ login, setLogin, submitLogin, openAdmin }) {
     requestAnimationFrame(() => inputRefs.current[Math.min(paste.length, 2)]?.focus());
   }
 
+  function clearToken() {
+    setLogin(s => ({ ...s, tokenChars: ['', '', ''], pin: '', confirmPin: '', error: '', resetMode: false, resetCode: '', resetSent: false, resetSuccess: false }));
+    requestAnimationFrame(() => inputRefs.current[0]?.focus());
+  }
+
+  const eyebrow = showPin ? (needsSetup ? '// Set your admin PIN' : '// Admin login') : '// User login';
+  const heading = showPin
+    ? (needsSetup ? `Welcome, ${token}! 👋` : `Hey ${token} 👋`)
+    : 'Enter your token';
+  const sub = showPin
+    ? (needsSetup
+        ? 'Set a personal PIN to protect the admin panel. You only do this once.'
+        : 'Enter your PIN to unlock the admin panel.')
+    : 'Use your 2–3 character INIT token to enter the portal.';
+
   return (
     <div className="auth-wrap">
       <div className="card main-panel">
-        <div className="eyebrow">// User login</div>
-        <h1 className="h1">Enter your token</h1>
-        <div className="sub">Use your 2–3 character INIT token to enter the portal. The token is validated against the loaded users list.</div>
-        <div className="token-wrap">
+        <div className="eyebrow">{eyebrow}</div>
+        <h1 className="h1">{heading}</h1>
+        <div className="sub">{sub}</div>
+
+        {/* Token boxes */}
+        <div className="token-wrap" style={{ marginTop: 18 }}>
           {[0,1,2].map(i => (
             <input
               key={i}
               ref={el => (inputRefs.current[i] = el)}
               className="token-char mono"
+              style={showPin ? { opacity: 0.5, cursor: 'default' } : {}}
               value={login.tokenChars[i]}
               onChange={e => onChar(i, e.target.value)}
               onKeyDown={e => onKeyDown(i, e)}
@@ -1081,16 +1160,106 @@ function LoginGate({ login, setLogin, submitLogin, openAdmin }) {
               maxLength={1}
               autoComplete="off"
               spellCheck="false"
+              readOnly={showPin}
             />
           ))}
         </div>
-        <div className="token-hint">2 or 3 characters · letters and digits only</div>
-        {login.error && <div className="error-box" style={{ marginBottom: 12 }}>{login.error}</div>}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" disabled={disabled} onClick={submitLogin}>Go</button>
-          <button className="btn btn-secondary" type="button" onClick={openAdmin}>Admin login / setup</button>
-        </div>
-        <div className="small" style={{ marginTop: 12 }}>Admins can set up the portal and upload users.xlsx before user tokens are loaded.</div>
+        {!showPin && <div className="token-hint">2 or 3 characters · letters and digits only</div>}
+
+        {/* PIN section — slides in when admin token detected */}
+        {showPin && !login.resetMode && (
+          <div style={{ marginTop: 18 }}>
+            <div className="field">
+              <label>{needsSetup ? '🔐 New PIN' : '🔐 PIN'}</label>
+              <input
+                ref={pinRef}
+                type="password"
+                value={login.pin}
+                placeholder="4 or more characters"
+                onChange={e => setLogin(s => ({ ...s, pin: e.target.value, error: '' }))}
+                onKeyDown={e => e.key === 'Enter' && canSubmit && submitLogin()}
+                autoComplete="new-password"
+              />
+            </div>
+            {needsSetup && (
+              <div className="field">
+                <label>🔁 Confirm PIN</label>
+                <input
+                  type="password"
+                  value={login.confirmPin}
+                  placeholder="same PIN again"
+                  onChange={e => setLogin(s => ({ ...s, confirmPin: e.target.value, error: '' }))}
+                  onKeyDown={e => e.key === 'Enter' && canSubmit && submitLogin()}
+                  autoComplete="new-password"
+                />
+              </div>
+            )}
+            {!needsSetup && (
+              <div style={{ marginTop: 4 }}>
+                <button
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent, #006DCC)', fontSize: 13, padding: 0 }}
+                  onClick={() => requestPinReset(token)}
+                >
+                  Forgot your PIN? 🆘
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Reset flow — send + confirm code */}
+        {showPin && login.resetMode && (
+          <div style={{ marginTop: 18 }}>
+            {!login.resetSent ? (
+              <div className="sub" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>📡 Sending reset code to Telegram…</span>
+              </div>
+            ) : (
+              <>
+                <div style={{ background: 'var(--surface-2, #f0f9f4)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: 14 }}>
+                  ✅ A reset code was sent to the Telegram group — check the chat! 📱
+                </div>
+                <div className="field">
+                  <label>🔑 Reset code</label>
+                  <input
+                    type="text"
+                    placeholder="XXX-XXX"
+                    value={login.resetCode}
+                    onChange={e => setLogin(s => ({ ...s, resetCode: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''), error: '' }))}
+                    onKeyDown={e => e.key === 'Enter' && confirmPinReset(token, login.resetCode)}
+                    autoComplete="off"
+                    style={{ fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.15em', textTransform: 'uppercase' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                  <button className="btn btn-primary" style={{ width: 'auto' }} disabled={login.loading} onClick={() => confirmPinReset(token, login.resetCode)}>
+                    {login.loading ? 'Checking…' : 'Verify code 🔓'}
+                  </button>
+                  <button className="btn btn-secondary" style={{ width: 'auto' }} onClick={() => setLogin(s => ({ ...s, resetMode: false, resetSent: false, resetCode: '', error: '' }))}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {login.error && <div className="error-box" style={{ margin: '12px 0' }}>{login.error}</div>}
+
+        {!login.resetMode && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 16 }}>
+            <button className="btn btn-primary" disabled={!canSubmit || login.loading} onClick={submitLogin}>
+              {login.loading ? 'One sec…' : showPin ? (needsSetup ? 'Set PIN & go 🚀' : 'Login 🔓') : 'Go'}
+            </button>
+            {showPin && (
+              <button className="btn btn-secondary" style={{ width: 'auto' }} onClick={clearToken}>
+                ← Change token
+              </button>
+            )}
+          </div>
+        )}
+
+        {!showPin && <div className="small" style={{ marginTop: 12 }}>Admin users are prompted for a PIN automatically 🔐</div>}
       </div>
     </div>
   );
@@ -1645,7 +1814,7 @@ function completedStepsList(user) {
   return STEPS.filter(step => getVisibleDone(user, step));
 }
 
-function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminStep, pendingAdminTasks, saveConfig }) {
+function AdminView({ admin, setAdmin, loadAdminData, toggleAdminStep, pendingAdminTasks, saveConfig, adminResetPeer, adminChangePIN }) {
   const [adminTab, setAdminTab] = useState('wizard');
   const [logStatus, setLogStatus] = useState('all');
   const [logEvent, setLogEvent] = useState('');
@@ -1660,40 +1829,6 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
   useEffect(() => {
     if (admin.session && !admin.data) loadAdminData();
   }, [admin.session]);
-
-  if (!admin.session) {
-    const availableTokens = admin.mode === 'setup' ? admin.adminTokens : admin.configuredTokens;
-    return (
-      <div className="auth-wrap">
-        <div className="card main-panel" style={{ minWidth: 0, overflow: "hidden", width: "100%" }}>
-          <div className="eyebrow">// Admin access</div>
-          <h1 className="h1">{admin.mode === 'setup' ? 'Set admin credential' : 'Admin login'}</h1>
-          <div className="sub">{admin.mode === 'setup' ? 'Set a personal password for your admin token.' : 'Log in with your admin token and personal password.'}</div>
-          <div className="form-grid" style={{ marginTop: 18 }}>
-            <div className="field">
-              <label>Your admin token</label>
-              {availableTokens.length > 0
-                ? <select value={admin.token} onChange={e => setAdmin(s => ({ ...s, token: e.target.value }))}>
-                    <option value="">— select —</option>
-                    {availableTokens.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                : <input type="text" placeholder="e.g. JPR" value={admin.token} onChange={e => setAdmin(s => ({ ...s, token: e.target.value.toUpperCase() }))} />}
-            </div>
-            {admin.mode === 'setup' && admin.configured && admin.configuredTokens.includes((admin.token || '').toUpperCase()) && (
-              <div className="field"><label>Current password</label><input type="password" value={admin.current} onChange={e => setAdmin(s => ({ ...s, current: e.target.value }))} /></div>
-            )}
-            <div className="field"><label>{admin.mode === 'setup' ? 'New password' : 'Password'}</label><input type="password" value={admin.credential} onChange={e => setAdmin(s => ({ ...s, credential: e.target.value }))} onKeyDown={e => e.key === 'Enter' && doAdminAuth()} /></div>
-            {admin.mode === 'setup' && <div className="field"><label>Confirm password</label><input type="password" value={admin.confirm} onChange={e => setAdmin(s => ({ ...s, confirm: e.target.value }))} /></div>}
-            {admin.error && <div className="error-box">{admin.error}</div>}
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <button className="btn btn-primary" disabled={admin.loading} onClick={doAdminAuth}>{admin.loading ? 'Working…' : admin.mode === 'setup' ? 'Save credential' : 'Login'}</button>
-              <button className="btn btn-secondary" onClick={() => setAdmin(s => ({ ...s, mode: s.mode === 'setup' ? 'login' : 'setup', error: '' }))}>{admin.mode === 'setup' ? 'Use login' : 'Set / change my password'}</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const users = admin.data?.users || [];
   const queue = admin.data?.queue || [];
@@ -2004,30 +2139,94 @@ function AdminView({ admin, setAdmin, doAdminAuth, loadAdminData, toggleAdminSte
 
         {showAdminTokenConfig && (
           <div onClick={() => setShowAdminTokenConfig(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 1000 }}>
-            <div className="card side-card" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, margin: 0 }}>
-              <div className="side-card-title">Allowed admin tokens</div>
+            <div className="card side-card" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, margin: 0, maxHeight: '90vh', overflowY: 'auto' }}>
+
+              {/* ── Allowed admin tokens ──────────────────────────────────── */}
+              <div className="side-card-title">⚙️ Admin settings</div>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, marginTop: 4 }}>Allowed admin tokens</div>
               <div className="field"><input aria-label="Allowed admin tokens" value={admin.configTokens} onChange={e => setAdmin(s => ({ ...s, configTokens: e.target.value, error: '' }))} /></div>
-              <div className="small" style={{ marginTop: 10 }}>Comma-separated admin tokens. Defaults are JPR, AMD, and SCH; add or remove tokens here and save.</div>
-              {admin.error && <div className="error-box" style={{ marginTop: 10 }}>{String(admin.error)}</div>}
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 12 }}>
+              <div className="small" style={{ marginTop: 6 }}>Comma-separated. Add or remove tokens here and save.</div>
+              {admin.error && <div className="error-box" style={{ marginTop: 8 }}>{String(admin.error)}</div>}
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
                 <button className="btn btn-secondary" style={{ width: 'auto', whiteSpace: 'nowrap' }} disabled={admin.loading} onClick={() => setShowAdminTokenConfig(false)}>Close</button>
-                <button
-                  className="btn btn-primary"
-                  style={{ width: 'auto', whiteSpace: 'nowrap' }}
-                  disabled={admin.loading}
-                  onClick={async () => {
-                    const ok = await saveConfig();
-                    if (ok) setShowAdminTokenConfig(false);
-                  }}
-                >
-                  {admin.loading ? 'Saving…' : 'Save config'}
+                <button className="btn btn-primary" style={{ width: 'auto', whiteSpace: 'nowrap' }} disabled={admin.loading} onClick={async () => { const ok = await saveConfig(); if (ok) setShowAdminTokenConfig(false); }}>
+                  {admin.loading ? 'Saving…' : 'Save'}
                 </button>
               </div>
+
+              {/* ── Change my PIN ─────────────────────────────────────────── */}
+              <hr style={{ margin: '18px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
+              <ChangePINSection adminWho={admin.who} adminChangePIN={adminChangePIN} />
+
+              {/* ── Reset a colleague's PIN ───────────────────────────────── */}
+              <hr style={{ margin: '18px 0', border: 'none', borderTop: '1px solid var(--border)' }} />
+              <ResetPeerSection adminTokens={admin.adminTokens} adminWho={admin.who} adminResetPeer={adminResetPeer} />
+
             </div>
           </div>
         )}
 
       </div>
+    </div>
+  );
+}
+
+function ChangePINSection({ adminWho, adminChangePIN }) {
+  const [f, setF] = useState({ current: '', next: '', confirm: '', loading: false, msg: '', err: '' });
+  async function submit() {
+    setF(s => ({ ...s, loading: true, msg: '', err: '' }));
+    const result = await adminChangePIN(f.current, f.next, f.confirm);
+    if (result.success) setF({ current: '', next: '', confirm: '', loading: false, msg: '✅ PIN updated — stay safe out there! 🎉', err: '' });
+    else setF(s => ({ ...s, loading: false, err: result.error || 'Failed', msg: '' }));
+  }
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>🔐 Change my PIN ({adminWho})</div>
+      <div className="field"><label>Current PIN</label><input type="password" value={f.current} onChange={e => setF(s => ({ ...s, current: e.target.value, err: '', msg: '' }))} autoComplete="current-password" /></div>
+      <div className="field"><label>New PIN</label><input type="password" value={f.next} onChange={e => setF(s => ({ ...s, next: e.target.value, err: '', msg: '' }))} autoComplete="new-password" /></div>
+      <div className="field"><label>Confirm new PIN</label><input type="password" value={f.confirm} onKeyDown={e => e.key === 'Enter' && submit()} onChange={e => setF(s => ({ ...s, confirm: e.target.value, err: '', msg: '' }))} autoComplete="new-password" /></div>
+      {f.err && <div className="error-box" style={{ marginBottom: 8 }}>{f.err}</div>}
+      {f.msg && <div style={{ color: 'green', fontSize: 13, marginBottom: 8 }}>{f.msg}</div>}
+      <button className="btn btn-primary" style={{ width: 'auto' }} disabled={f.loading || !f.current || !f.next || !f.confirm} onClick={submit}>
+        {f.loading ? 'Saving…' : 'Update PIN'}
+      </button>
+    </div>
+  );
+}
+
+function ResetPeerSection({ adminTokens, adminWho, adminResetPeer }) {
+  const targets = adminTokens.filter(t => t !== adminWho);
+  const [target, setTarget] = useState('');
+  const [state, setState] = useState({ loading: false, msg: '', err: '' });
+  async function submit() {
+    if (!target) return;
+    setState({ loading: true, msg: '', err: '' });
+    const result = await adminResetPeer(target);
+    if (result.success) setState({ loading: false, msg: `✅ PIN cleared for ${target} — they'll set a new one on next login 🔓`, err: '' });
+    else setState({ loading: false, err: result.error || 'Reset failed', msg: '' });
+  }
+  if (targets.length === 0) return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>👥 Reset a colleague's PIN</div>
+      <div className="small">No other admin tokens configured.</div>
+    </div>
+  );
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>👥 Reset a colleague's PIN</div>
+      <div className="small" style={{ marginBottom: 10 }}>Clears their PIN so they can set a new one on next login. Use this if they're locked out and have no Telegram access.</div>
+      <div className="field">
+        <label>Admin token to reset</label>
+        <select value={target} onChange={e => { setTarget(e.target.value); setState({ loading: false, msg: '', err: '' }); }}>
+          <option value="">— select —</option>
+          {targets.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      {state.err && <div className="error-box" style={{ marginBottom: 8 }}>{state.err}</div>}
+      {state.msg && <div style={{ color: 'green', fontSize: 13, marginBottom: 8 }}>{state.msg}</div>}
+      <button className="btn btn-secondary" style={{ width: 'auto' }} disabled={state.loading || !target} onClick={submit}>
+        {state.loading ? 'Resetting…' : `Reset ${target || '…'}'s PIN 🔑`}
+      </button>
     </div>
   );
 }

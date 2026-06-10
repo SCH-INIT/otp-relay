@@ -12,6 +12,8 @@ import os
 import re
 import secrets
 import threading
+import urllib.parse
+import urllib.request
 from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -133,6 +135,8 @@ def metrics() -> Response:
 
 # -- Config -------------------------------------------------------------------
 SMS_SECRET_TOKEN = os.getenv("SMS_SECRET_TOKEN", "changeme")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # How long the active user has to trigger their OTP before being evicted.
 # Other users wait until this window expires or OTP is delivered.
@@ -215,12 +219,16 @@ WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
-ADMIN_TTL_SECONDS = 8 * 60 * 60
+ADMIN_TTL_SECONDS = 1 * 60 * 60  # 1-hour sliding session for admin users
 ADMIN_SESSIONS: Dict[str, Dict[str, Any]] = {}  # session → {"ts": float, "who": str}
 ADMIN_LOGIN_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
 ADMIN_LOGIN_WINDOW_SECONDS = int(os.getenv("ADMIN_LOGIN_WINDOW_SECONDS", "300"))
 ADMIN_LOGIN_MAX_ATTEMPTS = int(os.getenv("ADMIN_LOGIN_MAX_ATTEMPTS", "8"))
 ADMIN_LOGIN_LOCKOUT_SECONDS = int(os.getenv("ADMIN_LOGIN_LOCKOUT_SECONDS", "900"))
+# PIN reset codes — stored in memory (+ Redis when available) with a short TTL
+ADMIN_RESET_CODES: Dict[str, Dict[str, Any]] = {}  # token → {"code": str, "expires": float}
+REDIS_ADMIN_RESET_PREFIX = "admin:reset:"
+ADMIN_RESET_TTL_SECONDS = 15 * 60  # codes expire after 15 minutes
 WIZARD_DB_LOCK = threading.Lock()
 WIZARD_CLIENT_SECRET_MIN_LENGTH = int(os.getenv("WIZARD_CLIENT_SECRET_MIN_LENGTH", "32"))
 
@@ -300,6 +308,73 @@ def _redis_pending_key(token: str) -> str:
 
 def _redis_admin_session_key(session: str) -> str:
     return f"{REDIS_ADMIN_SESSION_PREFIX}{session}"
+
+
+def _redis_admin_reset_key(token: str) -> str:
+    return f"{REDIS_ADMIN_RESET_PREFIX}{token}"
+
+
+def _generate_reset_code() -> str:
+    """Generate a 7-character reset code like X7K-29M.
+    Avoids visually ambiguous characters (0, O, I, 1) so it's easy to read."""
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    a = "".join(secrets.choice(chars) for _ in range(3))
+    b = "".join(secrets.choice(chars) for _ in range(3))
+    return f"{a}-{b}"
+
+
+def _store_reset_code(token: str, code: str) -> None:
+    expires = datetime.now(timezone.utc).timestamp() + ADMIN_RESET_TTL_SECONDS
+    entry = {"code": code, "expires": expires}
+    ADMIN_RESET_CODES[token] = entry
+    if _use_redis_state():
+        try:
+            redis_client.setex(_redis_admin_reset_key(token), ADMIN_RESET_TTL_SECONDS, json.dumps(entry))
+        except Exception as exc:
+            logger.warning("Could not store reset code in Redis: %s", exc)
+
+
+def _validate_and_consume_reset_code(token: str, code: str) -> bool:
+    """Return True and consume the code if it is valid and unexpired."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    if _use_redis_state():
+        try:
+            raw = redis_client.get(_redis_admin_reset_key(token))
+            if raw:
+                entry = json.loads(raw)
+                if entry.get("expires", 0) > now_ts and entry.get("code", "") == code:
+                    redis_client.delete(_redis_admin_reset_key(token))
+                    ADMIN_RESET_CODES.pop(token, None)
+                    return True
+            return False
+        except Exception as exc:
+            logger.warning("Redis reset code validation failed, falling back: %s", exc)
+
+    entry = ADMIN_RESET_CODES.get(token)
+    if entry and entry.get("expires", 0) > now_ts and entry.get("code", "") == code:
+        ADMIN_RESET_CODES.pop(token, None)
+        return True
+    return False
+
+
+def _send_telegram(message: str) -> None:
+    """Send a plain-text or HTML Telegram message. Fire-and-forget; logs but never raises."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("Telegram not configured — skipping message")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML",
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            logger.info("Telegram message sent: %s", resp.read()[:80])
+    except Exception as exc:
+        logger.error("Telegram delivery failed: %s", exc)
 
 
 def _redis_admin_login_attempt_key(client_ip: str) -> str:
@@ -797,6 +872,9 @@ class WizardRecord(BaseModel):
 
 class UserLoginPayload(BaseModel):
     token: str
+    pin: Optional[str] = None          # required for admin tokens
+    confirm_pin: Optional[str] = None  # required when setting a PIN for the first time
+    admin_session: Optional[str] = None  # existing session token for silent page-reload restore
 
 
 class CredentialPayload(BaseModel):
@@ -1037,16 +1115,7 @@ async def readyz():
     }
 
 
-@app.post("/user/login")
-async def user_login(payload: UserLoginPayload):
-    """Validate one user token without exposing the full admin-only user directory."""
-    token = str(payload.token or "").strip().upper()
-    if token not in users:
-        audit("user_login_failed", token=token, detail="Unknown token", status="warn")
-        raise HTTPException(status_code=404, detail="Token not recognised. Check with IT.")
-
-    user = users[token]
-    audit("user_login", token=token, detail="User token validated")
+def _user_fields(user: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "token": user["token"],
         "name": user["name"],
@@ -1054,6 +1123,73 @@ async def user_login(payload: UserLoginPayload):
         "test_env": user.get("test_env", ""),
         "prod_env": user.get("prod_env", ""),
     }
+
+
+@app.post("/user/login")
+async def user_login(payload: UserLoginPayload, request: Request):
+    """Validate a user token.  Admin tokens additionally require a PIN.
+
+    Flow:
+    • Non-admin token          → returns user fields immediately (no PIN involved).
+    • Admin token, no pin sent → returns {requires_pin, needs_setup} so the
+                                  frontend can reveal the PIN field inline.
+    • Admin token + valid pin  → returns user fields + admin_session.
+    • Admin token + admin_session still valid (page reload) → restores silently.
+    """
+    token = str(payload.token or "").strip().upper()
+    if token not in users:
+        audit("user_login_failed", token=token, detail="Unknown token", status="warn")
+        raise HTTPException(status_code=404, detail="Token not recognised. Check with IT.")
+
+    user = users[token]
+    admin_token_list = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+
+    if token not in admin_token_list:
+        # Regular user — no PIN needed
+        audit("user_login", token=token, detail="User token validated")
+        return _user_fields(user)
+
+    # ── Admin token ────────────────────────────────────────────────────────────
+    hashes = _auth_hashes(_auth_db())
+    has_pin = token in hashes
+
+    # Silent restore: existing admin session passed in on page reload
+    if payload.admin_session:
+        try:
+            who = _require_admin(payload.admin_session)
+            if who == token:
+                audit("user_login", token=token, detail="Admin session restored silently")
+                return {**_user_fields(user), "admin_session": payload.admin_session, "is_admin": True}
+        except HTTPException:
+            pass  # Session expired — fall through to PIN check
+
+    # No PIN provided yet → tell the frontend to reveal the PIN field
+    if not payload.pin:
+        return {**_user_fields(user), "requires_pin": True, "needs_setup": not has_pin}
+
+    pin = (payload.pin or "").strip()
+
+    if not has_pin:
+        # First-time setup (or post-reset)
+        if len(pin) < 4:
+            raise HTTPException(status_code=400, detail="PIN too short — use at least 4 characters")
+        confirm = (payload.confirm_pin or "").strip()
+        if pin != confirm:
+            raise HTTPException(status_code=400, detail="PINs do not match — try again 🙈")
+        hashes[token] = bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+        audit("admin_pin_setup", token=token, detail=f"PIN set for {token}")
+    else:
+        _check_login_rate_limit(request)
+        if not bcrypt.checkpw(pin.encode("utf-8"), hashes[token].encode("utf-8")):
+            _record_login_failure(request)
+            audit("admin_auth_failed", token=token, detail=f"Wrong PIN for {token}", status="warn")
+            raise HTTPException(status_code=401, detail="Wrong PIN — try again 🔒")
+        _record_login_success(request)
+
+    admin_session = _create_admin_session(token)
+    audit("admin_auth_login", token=token, detail=f"Admin session created for {token}")
+    return {**_user_fields(user), "admin_session": admin_session, "is_admin": True}
 
 
 @app.post("/claim-otp")
@@ -1535,6 +1671,83 @@ async def admin_auth_logout(x_admin_session: Optional[str] = Header(default=None
         _delete_admin_session(x_admin_session)
         audit("admin_auth_logout", detail=f"Admin session closed for {who}")
     return {"status": "ok"}
+
+
+@app.post("/admin/auth/reset-request")
+async def admin_pin_reset_request(payload: CredentialPayload, request: Request):
+    """Send a one-time reset code to Telegram for a locked-out admin."""
+    who = (payload.token or "").strip().upper()
+    if not who:
+        raise HTTPException(status_code=400, detail="Token required")
+
+    admin_token_list = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    if who not in admin_token_list:
+        # Generic response — don't reveal which tokens are admin
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    _check_login_rate_limit(request)
+
+    code = _generate_reset_code()
+    _store_reset_code(who, code)
+
+    msg = (
+        f"🔑 <b>Admin PIN reset requested</b>\n\n"
+        f"Token <b>{who}</b> needs a new PIN.\n\n"
+        f"Reset code — tap to copy 👇\n"
+        f"<code>{code}</code>\n\n"
+        f"⏰ Valid for <b>15 minutes</b> · single use only\n\n"
+        f"🙈 Wasn't <b>{who}</b>? Someone might be sniffing around.\n"
+        f"Give another admin a heads-up! 🚨"
+    )
+    _send_telegram(msg)
+    audit("admin_pin_reset_requested", token=who, detail=f"PIN reset code sent for {who}")
+    return {"status": "ok"}
+
+
+@app.post("/admin/auth/reset-confirm")
+async def admin_pin_reset_confirm(payload: CredentialPayload, request: Request):
+    """Validate the Telegram reset code and clear the PIN so the user can set a new one."""
+    who = (payload.token or "").strip().upper()
+    code = (payload.credential or "").strip().upper()
+
+    if not who or not code:
+        raise HTTPException(status_code=400, detail="Token and code required")
+
+    _check_login_rate_limit(request)
+
+    if not _validate_and_consume_reset_code(who, code):
+        _record_login_failure(request)
+        audit("admin_pin_reset_failed", token=who, detail="Invalid or expired reset code", status="warn")
+        raise HTTPException(status_code=401, detail="Invalid or expired reset code 🔒")
+
+    _record_login_success(request)
+    db = _auth_db()
+    hashes = _auth_hashes(db)
+    hashes.pop(who, None)
+    _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+    audit("admin_pin_reset_confirmed", token=who, detail=f"PIN cleared for {who} — fresh setup required")
+    return {"status": "ok", "needs_setup": True}
+
+
+@app.post("/admin/auth/reset-peer")
+async def admin_pin_reset_peer(payload: CredentialPayload, x_admin_session: Optional[str] = Header(default=None)):
+    """Logged-in admin resets another admin's PIN (clears the hash)."""
+    actor = _require_admin(x_admin_session)
+    target = (payload.token or "").strip().upper()
+
+    if not target:
+        raise HTTPException(status_code=400, detail="Target token required")
+
+    admin_token_list = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    if target not in admin_token_list:
+        raise HTTPException(status_code=404, detail="Token not in admin list")
+
+    db = _auth_db()
+    hashes = _auth_hashes(db)
+    hashes.pop(target, None)
+    _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+    audit("admin_pin_reset_peer", token=target, detail=f"PIN reset by {actor} for {target}")
+    return {"status": "ok", "target": target}
 
 
 @app.get("/admin/config")
