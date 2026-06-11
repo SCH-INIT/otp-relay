@@ -39,6 +39,7 @@ Add these application/service entries to the VPN access request.
 - IP Address / URL: `10.11.174.10` and `10.11.174.21`
 - RDP Port: `3389`
 - Note: `AVM Nextgen migration project system access. Risk ID: RSP-10378`
+- Country: Choose up to 2 countries only
 
 ### PAM
 

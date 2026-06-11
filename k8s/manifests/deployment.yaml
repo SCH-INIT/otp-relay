@@ -52,6 +52,16 @@ spec:
                 secretKeyRef:
                   name: otp-relay-secrets
                   key: SMS_SECRET_TOKEN
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: otp-relay-secrets
+                  key: TELEGRAM_BOT_TOKEN
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: otp-relay-secrets
+                  key: TELEGRAM_CHAT_ID
 
           # ── Resource limits ────────────────────────────────────────────────
           # Memory: 512Mi limit. 256Mi was the original limit, but OOMKilled
