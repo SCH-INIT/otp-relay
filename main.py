@@ -879,7 +879,7 @@ class UserLoginPayload(BaseModel):
 
 class CredentialPayload(BaseModel):
     token: Optional[str] = None
-    credential: str
+    credential: Optional[str] = None
     current: Optional[str] = None
 
 
