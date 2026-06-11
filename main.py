@@ -883,6 +883,10 @@ class CredentialPayload(BaseModel):
     current: Optional[str] = None
 
 
+class TokenPayload(BaseModel):
+    token: str
+
+
 class ConfigPayload(BaseModel):
     admin_tokens: List[str]
 
@@ -1674,7 +1678,7 @@ async def admin_auth_logout(x_admin_session: Optional[str] = Header(default=None
 
 
 @app.post("/admin/auth/reset-request")
-async def admin_pin_reset_request(payload: CredentialPayload, request: Request):
+async def admin_pin_reset_request(payload: TokenPayload, request: Request):
     """Send a one-time reset code to Telegram for a locked-out admin."""
     who = (payload.token or "").strip().upper()
     if not who:
@@ -1730,7 +1734,7 @@ async def admin_pin_reset_confirm(payload: CredentialPayload, request: Request):
 
 
 @app.post("/admin/auth/reset-peer")
-async def admin_pin_reset_peer(payload: CredentialPayload, x_admin_session: Optional[str] = Header(default=None)):
+async def admin_pin_reset_peer(payload: TokenPayload, x_admin_session: Optional[str] = Header(default=None)):
     """Logged-in admin resets another admin's PIN (clears the hash)."""
     actor = _require_admin(x_admin_session)
     target = (payload.token or "").strip().upper()
