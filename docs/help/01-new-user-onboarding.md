@@ -21,7 +21,6 @@ Complete the official RTA new-user access form before the RTA account can be req
 5. Add your signature or name at the end of the email.
 6. Make sure the employee ID copy in PDF is available for the request package.
 
-![New user onboarding sequence](assets/new-user-onboarding-sequence.png)
 <!-- /wizard -->
 
 <!-- wizard:account_creation -->
