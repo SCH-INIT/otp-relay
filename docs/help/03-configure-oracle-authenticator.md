@@ -7,7 +7,6 @@ slug: configure-oracle-authenticator
 
 # Configure Oracle Authenticator
 
-<!-- wizard:oracle_auth -->
 ## Oracle Authenticator setup
 
 Configure Oracle Authenticator immediately after resetting the RTA password.
@@ -24,4 +23,3 @@ Configure Oracle Authenticator immediately after resetting the RTA password.
 If an error message appears after sign-in but the authenticator code is already registered, continue unless access testing later fails.
 
 Oracle Authenticator is used as the second factor for RTA VPN and PAM access.
-<!-- /wizard -->

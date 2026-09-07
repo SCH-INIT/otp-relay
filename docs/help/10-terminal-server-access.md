@@ -10,7 +10,6 @@ slug: terminal-server-access
 System: Ubuntu Terminal Server (`srvterminal`)  
 Internal IP: `172.31.10.82`
 
-<!-- wizard:password_reset -->
 ## Terminal Server when outside UAE
 
 Use the Terminal Server if the RTA password reset link does not open directly from your location.
@@ -33,9 +32,6 @@ Use the Terminal Server if the RTA password reset link does not open directly fr
 ![Browser-based RDP login page after the first terminal server login](assets/terminal-browser-rdp-login.png)
 
 ![Ubuntu desktop opened directly in the browser](assets/terminal-browser-desktop.png)
-<!-- /wizard -->
-
-<!-- wizard:password_reset -->
 ## Standard Windows RDP option
 
 Use this method if you prefer Windows Remote Desktop Connection.
@@ -53,4 +49,3 @@ Use this method if you prefer Windows Remote Desktop Connection.
 ![Xorg login prompt for the terminal server session](assets/terminal-xorg-login.png)
 
 ![Ubuntu desktop after connecting through Windows RDP](assets/terminal-rdp-desktop.png)
-<!-- /wizard -->

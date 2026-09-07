@@ -48,9 +48,9 @@ The portal is currently:
 - **PVC-backed runtime files** in Kubernetes:
   - `users.xlsx`
   - `audit.log`
-  - `wizard_progress.json`
   - `admin_auth.json`
   - `admin_config.json`
+  - `admin_profiles.json`
 - **SMTP is diagnostics only.** OTP delivery does not use email.
 
 The critical design point: the current queue and pending OTPs are process-local. If the pod restarts, active OTP state is lost. That is acceptable in Phase 1 because users can claim again, but it means we must keep `replicas: 1` until Redis or another shared state layer is added.
@@ -73,10 +73,8 @@ SCH-INIT/otp-relay (k8s branch)
 ├── frontend/
 │   ├── index.html
 │   ├── app.jsx
-│   ├── guide.html
 │   └── style.css
 ├── scripts/
-│   ├── build_help_docs.py
 │   └── generate_sample_users.py
 ├── docs/
 │   ├── k8s-plan.md
@@ -173,10 +171,16 @@ The PVC should contain:
 ```text
 /app/data/users.xlsx
 /app/data/audit.log
-/app/data/wizard_progress.json
 /app/data/admin_auth.json
 /app/data/admin_config.json
+/app/data/admin_profiles.json
 ```
+
+During the upgrade that removes the former onboarding feature, an existing
+`wizard_progress.json` may remain on the PVC as a read-only migration source.
+Admin credential and expiry fields are migrated to `admin_profiles.json`.
+Operators should retain or back up the legacy file until migration is verified;
+the deployment does not delete runtime data automatically.
 
 ---
 
@@ -259,12 +263,14 @@ The Kubernetes version is good enough for Phase 1 when all of this works:
 - OTP claim flow works.
 - SMS POST to `/sms-received` works.
 - OTP appears on screen.
-- Wizard saves progress to `wizard_progress.json`.
 - Admin login works.
 - Admin token config creates/updates `admin_config.json`.
+- Admin PIN hashes persist in `admin_auth.json`.
+- Admin usernames and password/VPN renewal dates persist in `admin_profiles.json` and are visible only to authenticated admins; actual account passwords are never stored.
+- Admin live queue and audit filters reflect OTP claim, wait, expiry, cancellation, rejection, and delivery events.
+- Admin XLSX upload/reload validates and replaces `users.xlsx` without removing the existing file on validation failure.
 - `users.xlsx` loads from `/app/data/users.xlsx`.
 - Audit log writes to `/app/data/audit.log`.
-- Guide pop-out loads `frontend/guide.html`.
 - `/healthz` returns OK.
 - `/readyz` returns OK.
 - Pod restart does not lose PVC-backed files.

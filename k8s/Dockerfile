@@ -8,7 +8,7 @@ COPY frontend/ ./frontend/
 RUN npx babel frontend/app.jsx --presets @babel/preset-react --out-file frontend/app.js && \
     rm frontend/app.jsx
 # ── Stage 2: Python build ────────────────────────────────────────────────────
-# Install Python dependencies and build help docs.
+# Install Python dependencies.
 FROM python:3.12-slim AS builder
 WORKDIR /build
 COPY requirements.txt .
@@ -16,11 +16,6 @@ RUN python -m venv /build/venv && \
     /build/venv/bin/pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY --from=frontend /build/frontend/ ./frontend/
-COPY docs/help/ ./docs/help/
-COPY scripts/build_help_docs.py ./scripts/build_help_docs.py
-# Build help docs: converts docs/help/*.md into frontend/help/wizard-guide.json
-# and frontend/help/rendered/*.html.
-RUN /build/venv/bin/python scripts/build_help_docs.py
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 # Create a non-root user — the container should not run as root

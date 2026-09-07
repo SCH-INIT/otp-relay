@@ -7,9 +7,9 @@ slug: new-user-onboarding
 
 # New user onboarding
 
-This page contains the onboarding pieces used by the RTA Wizard. Each `wizard:` block maps to one wizard step so admin-owned steps do not show the full end-to-end user checklist.
+This page documents the complete new-user onboarding process, including steps
+owned by the user, Jathin, and Amer.
 
-<!-- wizard:form -->
 ## Access form
 
 Complete the official RTA new-user access form before the RTA account can be requested.
@@ -22,9 +22,6 @@ Complete the official RTA new-user access form before the RTA account can be req
 6. Make sure the employee ID copy in PDF is available for the request package.
 
 ![New user onboarding sequence](assets/new-user-onboarding-sequence.png)
-<!-- /wizard -->
-
-<!-- wizard:account_creation -->
 ## RTA account creation
 
 This step is owned by Jathin.
@@ -34,13 +31,12 @@ This step is owned by Jathin.
 3. Wait until Jathin confirms that the RTA account has been created.
 4. The expected username format is `IITS_*USERNAME*`.
 
-After Jathin shares the username, continue to **Save Your IITS Username** in the wizard.
-<!-- /wizard -->
-
-<!-- wizard:save_iits -->
+After Jathin shares the username, an administrator can record it in the OTP
+portal's **Your credentials** card.
 ## Save the IITS username
 
-After Jathin confirms the RTA account, save the `IITS_*USERNAME*` value in the wizard.
+After Jathin confirms the RTA account, an administrator can record the
+`IITS_*USERNAME*` value in the OTP portal's **Your credentials** card.
 
 Use the IITS username for:
 
@@ -50,9 +46,6 @@ Use the IITS username for:
 - PAM and SFTP-related access workflows
 
 Do not save passwords in the portal. Save only the username.
-<!-- /wizard -->
-
-<!-- wizard:adm_request -->
 ## ADM account and PAM onboarding
 
 This step is owned by Amer.
@@ -64,14 +57,11 @@ This step is owned by Amer.
 5. Amer sends the PAM account creation request with the approval email attached.
 
 You do not need to perform an RTA portal action during this step. Continue once Amer confirms that the ADM account and PAM onboarding path are ready.
-<!-- /wizard -->
-
-<!-- wizard:save_adm -->
 ## Save the ADM username
 
-After Amer confirms the ADM account, save the ADM username in the wizard.
+After Amer confirms the ADM account, an administrator can record the ADM
+username in the OTP portal's **Your credentials** card.
 
 Use the ADM username for PAM and privileged server-access workflows.
 
 Do not save passwords in the portal. Save only the username.
-<!-- /wizard -->

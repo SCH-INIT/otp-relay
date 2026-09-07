@@ -7,7 +7,6 @@ slug: request-rdp-sftp-pam-access
 
 # Request access for RDP, SFTP and PAM
 
-<!-- wizard:vpn_request -->
 ## Portal path
 
 1. Log in to the **RTA Automation Portal**.
@@ -26,9 +25,6 @@ slug: request-rdp-sftp-pam-access
 ![Select New VPN Access](assets/vpn-new-vpn-access.png)
 
 ![VPN request form details](assets/vpn-request-form-details.png)
-<!-- /wizard -->
-
-<!-- wizard:vpn_request -->
 ## Applications to request
 
 Add these application/service entries to the VPN access request.
@@ -57,4 +53,3 @@ Add these application/service entries to the VPN access request.
 ![Add PAM application or service](assets/vpn-add-pam-service.png)
 
 ![Add SSH or SFTP application or service](assets/vpn-add-ssh-service.png)
-<!-- /wizard -->

@@ -1,18 +1,6 @@
-# Help and Wizard Assets
+# Help Assets
 
-Store source screenshots and images for the Help Docs and RTA Wizard here.
-
-The build script copies this directory to:
-
-```text
-frontend/help/assets/
-```
-
-The live portal serves the copied files from:
-
-```text
-/help/assets/<filename>
-```
+Store source screenshots and images for the repository Help Docs here.
 
 Reference images from markdown like this:
 
@@ -20,4 +8,4 @@ Reference images from markdown like this:
 ![Description](assets/example.png)
 ```
 
-Do not manually edit generated copies under `frontend/help/assets/` or `/opt/otp-relay/frontend/help/assets/`.
+Keep images free of real usernames, passwords, OTPs, tokens, and other secrets.

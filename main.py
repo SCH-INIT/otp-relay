@@ -5,7 +5,6 @@
 # Delivery model: OTP is displayed on-screen via polling.
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -32,9 +31,9 @@ except ImportError:
     redis = None
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -213,11 +212,12 @@ logging.basicConfig(
 logger = logging.getLogger("otp-relay")
 redis_client = None
 
-# -- Server-backed wizard/admin state -----------------------------------------
+# -- Server-backed admin state ------------------------------------------------
 DATA_DIR = _resolve_runtime_path(os.environ.get("OTP_RELAY_DATA_DIR", "data"))
-WIZARD_FILE = DATA_DIR / "wizard_progress.json"
+LEGACY_WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
+ADMIN_PROFILES_FILE = DATA_DIR / "admin_profiles.json"
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
 ADMIN_TTL_SECONDS = 1 * 60 * 60  # 1-hour sliding session for admin users
 ADMIN_SESSIONS: Dict[str, Dict[str, Any]] = {}  # session → {"ts": float, "who": str}
@@ -229,8 +229,7 @@ ADMIN_LOGIN_LOCKOUT_SECONDS = int(os.getenv("ADMIN_LOGIN_LOCKOUT_SECONDS", "900"
 ADMIN_RESET_CODES: Dict[str, Dict[str, Any]] = {}  # token → {"code": str, "expires": float}
 REDIS_ADMIN_RESET_PREFIX = "admin:reset:"
 ADMIN_RESET_TTL_SECONDS = 15 * 60  # codes expire after 15 minutes
-WIZARD_DB_LOCK = threading.Lock()
-WIZARD_CLIENT_SECRET_MIN_LENGTH = int(os.getenv("WIZARD_CLIENT_SECRET_MIN_LENGTH", "32"))
+ADMIN_PROFILES_LOCK = threading.Lock()
 
 
 def _utcnow_naive() -> datetime:
@@ -597,14 +596,6 @@ def _write_json(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
-def _wizard_db() -> Dict[str, dict]:
-    return _read_json(WIZARD_FILE, {})
-
-
-def _save_wizard_db(db: Dict[str, dict]) -> None:
-    _write_json(WIZARD_FILE, db)
-
-
 def _auth_db() -> Dict[str, Any]:
     return _read_json(AUTH_FILE, {})
 
@@ -621,6 +612,72 @@ def _config_db() -> Dict[str, Any]:
 
 def _save_config_db(db: Dict[str, Any]) -> None:
     _write_json(CONFIG_FILE, db)
+
+
+ADMIN_PROFILE_FIELDS = (
+    "display_name",
+    "iits_username",
+    "adm_username",
+    "iits_pw_date",
+    "adm_pw_date",
+    "vpn_date",
+)
+
+
+def _default_admin_profile(token: str) -> Dict[str, Any]:
+    user = users.get(token, {})
+    return {
+        "display_name": user.get("name", ""),
+        "iits_username": "",
+        "adm_username": "",
+        "iits_pw_date": None,
+        "adm_pw_date": None,
+        "vpn_date": None,
+    }
+
+
+def _admin_profiles_db() -> Dict[str, Dict[str, Any]]:
+    """Read profiles and lazily migrate profile fields from legacy Wizard data.
+
+    The legacy file remains untouched for rollback/recovery. Only currently
+    configured admin tokens are migrated. Callers hold ADMIN_PROFILES_LOCK.
+    """
+    db = _read_json(ADMIN_PROFILES_FILE, {})
+    if not isinstance(db, dict):
+        db = {}
+
+    legacy = _read_json(LEGACY_WIZARD_FILE, {})
+    configured = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    changed = False
+    if isinstance(legacy, dict):
+        for raw_token in configured:
+            token = str(raw_token or "").strip().upper()
+            if not token or token in db:
+                continue
+            legacy_row = legacy.get(token)
+            if not isinstance(legacy_row, dict) or not any(field in legacy_row for field in ADMIN_PROFILE_FIELDS):
+                continue
+            defaults = _default_admin_profile(token)
+            db[token] = {
+                field: legacy_row.get(field, defaults[field])
+                for field in ADMIN_PROFILE_FIELDS
+            }
+            changed = True
+
+    if changed:
+        _write_json(ADMIN_PROFILES_FILE, db)
+    return db
+
+
+def _require_profile_admin(session: Optional[str]) -> str:
+    who = _require_admin(session).strip().upper()
+    configured = {
+        str(token or "").strip().upper()
+        for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    }
+    if who not in configured:
+        raise HTTPException(status_code=403, detail="Admin is no longer configured")
+    return who
 
 
 def _purge_admin_sessions() -> None:
@@ -686,11 +743,19 @@ def _require_admin(session: Optional[str]) -> str:
             except Exception:
                 meta = {"ts": float(raw), "who": "unknown"}
 
+            who = str(meta.get("who", "unknown")).strip().upper()
+            configured = {
+                str(token or "").strip().upper()
+                for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+            }
+            if who not in configured:
+                raise HTTPException(status_code=403, detail="Admin is no longer configured")
+
             # Sliding expiration: every valid admin request refreshes the session TTL.
             meta["ts"] = now_ts
             redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, json.dumps(meta))
             ADMIN_SESSIONS[session] = meta
-            return str(meta.get("who", "unknown"))
+            return who
         except HTTPException:
             raise
         except Exception as exc:
@@ -702,15 +767,15 @@ def _require_admin(session: Optional[str]) -> str:
     meta = ADMIN_SESSIONS.get(session)
     if not meta:
         raise HTTPException(status_code=401, detail="Invalid or expired admin session")
+    who = str(meta.get("who", "unknown")).strip().upper()
+    configured = {
+        str(token or "").strip().upper()
+        for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    }
+    if who not in configured:
+        raise HTTPException(status_code=403, detail="Admin is no longer configured")
     meta["ts"] = now_ts
-    return str(meta.get("who", "unknown"))
-
-
-def _model_dump(model: BaseModel) -> Dict[str, Any]:
-    """Support both Pydantic v1 and v2."""
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
+    return who
 
 
 def _client_ip(request: Request) -> str:
@@ -804,70 +869,13 @@ def _record_login_success(request: Request) -> None:
     _delete_login_attempt_row(_client_ip(request))
 
 
-def _hash_wizard_secret(secret: str) -> str:
-    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
-
-
-def _valid_wizard_owner(row: Dict[str, Any], client_secret: Optional[str]) -> bool:
-    stored_hash = str(row.get("client_secret_hash") or "")
-    if not stored_hash or not client_secret or len(client_secret) < WIZARD_CLIENT_SECRET_MIN_LENGTH:
-        return False
-    return secrets.compare_digest(stored_hash, _hash_wizard_secret(client_secret))
-
-
-def _bind_wizard_client(row: Dict[str, Any], client_secret: Optional[str]) -> bool:
-    """Silently bind or rebind a wizard record to the current browser client.
-
-    The user token is the durable owner of wizard progress. The client secret is
-    only a background edit marker, so stale PVC/browser state must not block a
-    valid token from continuing its own wizard progress.
-    """
-    if not client_secret or len(client_secret) < WIZARD_CLIENT_SECRET_MIN_LENGTH:
-        raise HTTPException(status_code=401, detail="Wizard client secret required")
-
-    current_hash = _hash_wizard_secret(client_secret)
-    if secrets.compare_digest(str(row.get("client_secret_hash") or ""), current_hash):
-        return False
-
-    row["client_secret_hash"] = current_hash
-    row["client_bound_at"] = _now_iso()
-    return True
-
-
-def _public_wizard_record(row: Dict[str, Any]) -> Dict[str, Any]:
-    public = dict(row)
-    public.pop("client_secret_hash", None)
-    return public
-
-
-def _default_wizard_record(token: str) -> Dict[str, Any]:
-    return {
-        "token": token,
-        "display_name": users[token]["name"],
-        "iits_username": "",
-        "adm_username": "",
-        "completed": [],
-        "adminCompleted": [],
-        "iits_pw_date": None,
-        "adm_pw_date": None,
-        "vpn_date": None,
-        "test_env": users[token].get("test_env", ""),
-        "prod_env": users[token].get("prod_env", ""),
-    }
-
-
-class WizardRecord(BaseModel):
-    token: str
+class AdminProfilePayload(BaseModel):
     display_name: str = ""
     iits_username: str = ""
     adm_username: str = ""
-    completed: List[str] = Field(default_factory=list)
-    adminCompleted: List[str] = Field(default_factory=list)
     iits_pw_date: Optional[str] = None
     adm_pw_date: Optional[str] = None
     vpn_date: Optional[str] = None
-    test_env: str = ""
-    prod_env: str = ""
 
 
 class UserLoginPayload(BaseModel):
@@ -899,8 +907,8 @@ def load_users_from_excel(path: str, replace_existing: bool = True) -> int:
       name     - display name
       email    - company email address
     Optional columns:
-      test_env - test environment assignment shown in the admin wizard
-      prod_env - production environment assignment shown in the admin wizard
+      test_env - test environment assignment retained for operational imports
+      prod_env - production environment assignment retained for operational imports
     Column names are case-insensitive. Spaces, dashes, and underscores are tolerated.
     Skipped rows are written to the audit log so IT can fix them.
     """
@@ -1579,7 +1587,7 @@ async def reload_users(x_admin_session: Optional[str] = Header(default=None)):
     return {"status": "ok", "users_loaded": count}
 
 
-# -- Wizard/admin server-backed endpoints -------------------------------------
+# -- Admin server-backed endpoints --------------------------------------------
 def _auth_hashes(db: Dict[str, Any]) -> Dict[str, str]:
     """Return the per-user hash map, migrating from the legacy single-hash format if needed."""
     if "hashes" in db:
@@ -1645,6 +1653,15 @@ async def admin_auth_login(payload: CredentialPayload, request: Request):
 
     # Generic error message — do not reveal whether the token exists or not
     _invalid = HTTPException(status_code=401, detail="Invalid token or credential")
+
+    configured = {
+        str(token or "").strip().upper()
+        for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    }
+    if who not in configured:
+        _record_login_failure(request)
+        audit("admin_auth_failed", detail=f"Login attempt for removed admin token {who}", status="warn")
+        raise _invalid
 
     stored = hashes.get(who)
     if not stored:
@@ -1773,123 +1790,38 @@ async def admin_config_save(payload: ConfigPayload, x_admin_session: Optional[st
     return {"status": "ok", "admin_tokens": tokens}
 
 
-@app.post("/wizard/progress")
-async def wizard_progress_save(
-    payload: WizardRecord,
-    x_wizard_client: Optional[str] = Header(default=None),
+@app.get("/admin/profile")
+async def admin_profile(x_admin_session: Optional[str] = Header(default=None)):
+    who = _require_profile_admin(x_admin_session)
+    with ADMIN_PROFILES_LOCK:
+        db = _admin_profiles_db()
+        stored = db.get(who, {})
+        if not isinstance(stored, dict):
+            stored = {}
+        profile = {**_default_admin_profile(who), **stored}
+    return {"token": who, **{field: profile.get(field) for field in ADMIN_PROFILE_FIELDS}}
+
+
+@app.post("/admin/profile")
+async def admin_profile_save(
+    payload: AdminProfilePayload,
     x_admin_session: Optional[str] = Header(default=None),
 ):
-    token = payload.token.strip().upper()
-    if token not in users:
-        raise HTTPException(status_code=404, detail="Unknown token")
-
-    is_admin = False
-    try:
-        _require_admin(x_admin_session)
-        is_admin = True
-    except HTTPException:
-        is_admin = False
-
-    with WIZARD_DB_LOCK:
-        db = _wizard_db()
-        existing = db.get(token, {})
-
-        if not is_admin:
-            _bind_wizard_client(existing, x_wizard_client)
-
-        row = _model_dump(payload)
-        row["token"] = token
-        row["updated_at"] = _now_iso()
-        row["client_secret_hash"] = existing.get("client_secret_hash")
-        if existing.get("client_bound_at"):
-            row["client_bound_at"] = existing.get("client_bound_at")
-        db[token] = row
-        _save_wizard_db(db)
-
-    audit("wizard_progress_saved", token=token, detail="Wizard profile/progress updated")
-    return {"status": "ok", "record": _public_wizard_record(row)}
-
-
-@app.get("/wizard/progress/{token}")
-async def wizard_progress_get(
-    token: str,
-    x_wizard_client: Optional[str] = Header(default=None),
-    x_admin_session: Optional[str] = Header(default=None),
-):
-    token = token.strip().upper()
-    if token not in users:
-        raise HTTPException(status_code=404, detail="Unknown token")
-
-    is_admin = False
-    try:
-        _require_admin(x_admin_session)
-        is_admin = True
-    except HTTPException:
-        is_admin = False
-
-    with WIZARD_DB_LOCK:
-        db = _wizard_db()
-        row = db.get(token)
-
-        if not row:
-            row = _default_wizard_record(token)
-            if not is_admin:
-                _bind_wizard_client(row, x_wizard_client)
-                row["updated_at"] = _now_iso()
-                db[token] = row
-                _save_wizard_db(db)
-            return _public_wizard_record(row)
-
-        if not is_admin:
-            changed = _bind_wizard_client(row, x_wizard_client)
-            if changed:
-                row["updated_at"] = _now_iso()
-                db[token] = row
-                _save_wizard_db(db)
-
-        return _public_wizard_record(row)
-
-
-@app.get("/admin/wizard")
-async def admin_wizard(x_admin_session: Optional[str] = Header(default=None)):
-    _require_admin(x_admin_session)
-    db = _wizard_db()
-    merged = []
-    for token, user in sorted(users.items()):
-        rec = db.get(token, {})
-        merged.append({
-            "token": token,
-            "display_name": rec.get("display_name") or user.get("name", ""),
-            "email": user.get("email", ""),
-            "iits_username": rec.get("iits_username", ""),
-            "adm_username": rec.get("adm_username", ""),
-            "completed": rec.get("completed", []),
-            "adminCompleted": rec.get("adminCompleted", []),
-            "iits_pw_date": rec.get("iits_pw_date"),
-            "adm_pw_date": rec.get("adm_pw_date"),
-            "vpn_date": rec.get("vpn_date"),
-            "test_env": rec.get("test_env") or user.get("test_env", ""),
-            "prod_env": rec.get("prod_env") or user.get("prod_env", ""),
-            "updated_at": rec.get("updated_at"),
-        })
-    return {"users": merged}
-
-
-@app.post("/api/onboard/notify")
-async def onboard_notify(request: Request):
-    payload = await request.json()
-    token = str(payload.get("token", "") or "").strip().upper() or None
-    detail = json.dumps(payload, sort_keys=True)[:500]
-    audit("onboard_notify", token=token, detail=detail)
-    return {"status": "ok", "received": payload, "ts": _now_iso()}
-
-
-@app.get("/guide.html", include_in_schema=False)
-def serve_guide_html():
-    guide_path = FRONTEND_DIR / "guide.html"
-    if not guide_path.exists():
-        raise HTTPException(status_code=404, detail="guide.html not deployed")
-    return FileResponse(guide_path)
+    who = _require_profile_admin(x_admin_session)
+    profile = {
+        "display_name": payload.display_name.strip(),
+        "iits_username": payload.iits_username.strip(),
+        "adm_username": payload.adm_username.strip(),
+        "iits_pw_date": payload.iits_pw_date.strip() if payload.iits_pw_date else None,
+        "adm_pw_date": payload.adm_pw_date.strip() if payload.adm_pw_date else None,
+        "vpn_date": payload.vpn_date.strip() if payload.vpn_date else None,
+    }
+    with ADMIN_PROFILES_LOCK:
+        db = _admin_profiles_db()
+        db[who] = profile
+        _write_json(ADMIN_PROFILES_FILE, db)
+    audit("admin_profile_saved", token=who, detail="Admin credential and expiry profile updated")
+    return {"token": who, **profile}
 
 
 # -- Prometheus gauge callbacks ------------------------------------------------

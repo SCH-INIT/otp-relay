@@ -7,7 +7,6 @@ slug: renew-rdp-sftp-pam-access
 
 # Renew access for RDP, SFTP and PAM
 
-<!-- wizard:vpn_request install_vpn -->
 ## Renewal path
 
 Use this renewal path when existing VPN / RDP / SFTP / PAM access is close to expiry.
@@ -29,4 +28,3 @@ VPN access, including RDP, SFTP, and PAM, expires after 90 days. The system may 
 ![Choose Extension of Existing VPN Access](assets/renew-vpn-extension-choice.png)
 
 ![Renewal form details](assets/renew-vpn-form-details.png)
-<!-- /wizard -->

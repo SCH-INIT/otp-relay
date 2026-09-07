@@ -46,10 +46,8 @@ otp-relay/ (k8s branch)
 ├── frontend/
 │   ├── index.html                   # Portal markup
 │   ├── app.jsx                      # React UI (Babel in-browser)
-│   ├── guide.html                   # Help page pop-out
 │   └── style.css                    # All styles
 ├── scripts/
-│   ├── build_help_docs.py           # Builds help page content from docs/help/
 │   └── generate_sample_users.py
 ├── docs/
 │   ├── k8s-plan.md                  # Architecture plan and phased roadmap
@@ -89,12 +87,14 @@ otp-relay/ (k8s branch)
 | App image | `otp-relay:latest` (local import, no registry) |
 | Monitor image | `otp-monitor:latest` (local import, no registry) |
 | Ingress | MetalLB LoadBalancer → port 80 → pod 8000 |
-| Persistent data | PVC at `/app/data/` (users.xlsx, audit.log, wizard state, admin config) |
+| Persistent data | PVC at `/app/data/` (`users.xlsx`, `audit.log`, admin authentication/configuration, and admin profiles) |
 | Secrets | `otp-relay-secrets` (SMS token, WhatsApp credentials) |
 | Config | `otp-relay-config` ConfigMap (timers, paths, monitor settings, admin tokens) |
 | CI/CD | GitHub Actions with self-hosted runner on K3s node |
 
 Both the app and monitor pods are pinned to the same worker node via `nodeSelector` (`otp-relay/storage=true`) because the PVC uses `ReadWriteOnce`.
+
+The portal keeps its OTP administration features: authenticated admins can inspect the live queue and filtered audit log, import or reload `users.xlsx`, reset admin PINs, and manage admin-token configuration. Admins also see their credential identifiers and password/VPN expiry dates on the OTP page. Those profile fields are stored in `admin_profiles.json`; actual account passwords are never stored. PIN hashes remain in `admin_auth.json` and configured admin tokens remain in `admin_config.json`.
 
 ---
 

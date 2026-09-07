@@ -90,7 +90,7 @@ jobs:
                 DEPLOY_SYSTEM_CHANGED=1
                 ;;
 
-              main.py|requirements.txt|k8s/Dockerfile|frontend/*|frontend/**|scripts/build_help_docs.py|docs/help/*|docs/help/**)
+              main.py|requirements.txt|k8s/Dockerfile|frontend/*|frontend/**)
                 APP_CHANGED=1
                 ;;
 

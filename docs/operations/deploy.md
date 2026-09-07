@@ -126,24 +126,33 @@ Smoke test:
     curl http://172.31.10.83/readyz
 
 
-## 9. Load users
+## 9. Configure admins and load users
 
-Copy `users.xlsx` to the master node, then into the running pod:
+Open the portal with a token listed in the `ADMIN_TOKENS` ConfigMap value. On
+first use, follow the prompt to create the administrator PIN. The PIN hash is
+stored in `/app/data/admin_auth.json`; the configured token set is stored in
+`/app/data/admin_config.json`, so both survive pod restarts.
+
+After signing in, open the admin portal and use the **Users** tab to upload the
+new `users.xlsx`. The server validates the workbook before atomically replacing
+the active list. A rejected upload leaves the current list untouched. The same
+tab shows the loaded Token, Name, and Email columns and provides a reload action
+for a workbook that was copied to the PVC out of band.
+
+For a command-line fallback, copy the workbook into the pod, then use the
+authenticated reload action in the admin portal:
 
     kubectl cp ~/users.xlsx otp-relay/<pod-name>:/app/data/users.xlsx
 
-Set up the admin credential (first time only):
+Verify that the Users tab shows a non-zero count and that `/readyz` reports the
+application ready. The **OTP Log** tab must continue to show the live queue and
+filtered audit entries.
 
-    curl -X POST http://172.31.10.83/admin/auth/setup \
-      -H "Content-Type: application/json" \
-      -d '{"credential": "<your-admin-password>"}'
-
-Save the session token from the response, then reload users:
-
-    curl -X POST http://172.31.10.83/admin/reload-users \
-      -H "X-Admin-Session: <session-token>"
-
-Verify: `curl http://172.31.10.83/readyz` should show a non-zero user count.
+Admin-only credential identifiers and password/VPN renewal dates are stored in
+`/app/data/admin_profiles.json` and displayed on the OTP page. Actual account
+passwords are never stored. An existing
+`wizard_progress.json` may remain on the PVC temporarily as a migration source;
+do not delete it until the migrated admin profiles have been checked.
 
 
 ## 10. Set up TLS for browser access

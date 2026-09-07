@@ -7,7 +7,6 @@ slug: use-pam
 
 # How to use PAM
 
-<!-- wizard:install_vpn -->
 ## PAM access test
 
 Use PAM after VPN access and Oracle Authenticator are working.
@@ -25,4 +24,3 @@ Use PAM after VPN access and Oracle Authenticator are working.
 ![Search for your RTA account in PAM](assets/pam-account-search.png)
 
 ![Choose PSM-RDP from the connect dropdown](assets/pam-connect-psm-rdp.png)
-<!-- /wizard -->

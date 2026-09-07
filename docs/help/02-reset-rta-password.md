@@ -7,7 +7,6 @@ slug: reset-rta-password
 
 # Reset RTA account password
 
-<!-- wizard:password_reset -->
 ## Password reset overview
 
 Reset the password for the available RTA accounts:
@@ -21,9 +20,6 @@ Important notes:
 2. If you are outside the UAE, connect through the Terminal Server first.
 3. Open the OTP Relay portal before triggering any OTP from the RTA website.
 4. Continue with Oracle Authenticator setup immediately after the password reset.
-<!-- /wizard -->
-
-<!-- wizard:password_reset -->
 ## OTP Relay sequence
 
 1. Open the OTP Relay portal in a new browser tab.
@@ -36,9 +32,6 @@ Important notes:
 8. Enter the OTP on the RTA page and click **Verify**.
 
 Do not trigger the OTP on the RTA website until the OTP Relay portal tells you to do so.
-<!-- /wizard -->
-
-<!-- wizard:password_reset -->
 ## Password rules
 
 Use a strong password that follows the RTA requirements:
@@ -57,4 +50,3 @@ Example dummy formats from the original guide:
 
 - `CzrTNQ@210`
 - `KzrTEQ@348`
-<!-- /wizard -->
