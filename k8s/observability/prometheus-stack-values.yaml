@@ -1,0 +1,183 @@
+# Helm values for kube-prometheus-stack
+#
+# Installs: Prometheus, Alertmanager, Grafana, kube-state-metrics, node-exporter
+# Namespace: observability
+# Pin: chart version 85.0.1 (passed via --version on helm install)
+#
+# Design reference: docs/dev/observability-design.md
+
+# -----------------------------------------------------------------------------
+# Prometheus
+# -----------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    # Retention as per design doc
+    retention: 15d
+    retentionSize: "9GiB"
+
+    # Resource budget per design doc
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 200m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+
+    # Pin to data worker
+    nodeSelector:
+      observability/role: data
+
+    # PVC for time-series data
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+    # Scrape every 15s by default (matches design)
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+
+    # Don't restrict ServiceMonitor discovery to chart-installed ones.
+    # We want our own ServiceMonitors (otp-relay, otp-monitor) to be picked up.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+
+# -----------------------------------------------------------------------------
+# Alertmanager
+# -----------------------------------------------------------------------------
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        memory: 64Mi
+        cpu: 20m
+      limits:
+        memory: 128Mi
+        cpu: 100m
+
+    # Pin to UI worker (small, lives near Grafana)
+    nodeSelector:
+      observability/role: ui
+
+    # No PVC — Alertmanager keeps its state in memory.
+    # On restart we lose in-flight silences; acceptable for our scale.
+
+# -----------------------------------------------------------------------------
+# Grafana
+# -----------------------------------------------------------------------------
+grafana:
+  # No ingress until Jathin's wildcard cert lands.
+  # Access during setup: kubectl port-forward -n observability svc/<grafana-svc> 3000:80
+  ingress:
+    enabled: false
+
+  # Admin password is auto-generated and stored in the
+  # observability/<release>-grafana Secret on first install.
+  # Retrieve with:
+  #   kubectl -n observability get secret <release>-grafana \
+  #     -o jsonpath='{.data.admin-password}' | base64 -d ; echo
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+  # Readiness probe given more time at startup. Grafana 13 with bundled
+  # dashboards is slow to come up; the default 30-second window can race
+  # with init and trigger pod restarts.
+  readinessProbe:
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 6
+
+  # Disable the init-chown-data sidecar. It runs as root and chowns the
+  # PVC contents to Grafana's UID 472. On the first install this is
+  # required; on every subsequent rollout it causes "Permission denied"
+  # because the old pod still has files open on the same volume.
+  # The PVC is already owned correctly after the first install — this
+  # init step is no longer needed.
+  initChownData:
+    enabled: false
+
+  # Force kill-before-create on rolling updates. The PVC is ReadWriteOnce,
+  # and the default RollingUpdate strategy briefly tries to run two pods
+  # against the same volume on the same node. Recreate avoids the overlap.
+  deploymentStrategy:
+    type: Recreate
+
+  # Pin to UI worker
+  nodeSelector:
+    observability/role: ui
+
+  # Persistence for plugins, sessions, and the sqlite DB
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    accessModes: ["ReadWriteOnce"]
+    size: 1Gi
+
+  # Bundled dashboards from the chart (Kubernetes-level), enabled by default.
+  # Our custom OTP Relay dashboard is added later in step 6.
+
+# -----------------------------------------------------------------------------
+# kube-state-metrics
+# -----------------------------------------------------------------------------
+kube-state-metrics:
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 20m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+  # No node pinning — small, can run anywhere
+
+# -----------------------------------------------------------------------------
+# node-exporter (DaemonSet on every node)
+# -----------------------------------------------------------------------------
+prometheus-node-exporter:
+  resources:
+    requests:
+      memory: 32Mi
+      cpu: 10m
+    limits:
+      memory: 64Mi
+      cpu: 50m
+
+# -----------------------------------------------------------------------------
+# Prometheus Operator (the controller managing Prometheus/Alertmanager CRDs)
+# -----------------------------------------------------------------------------
+prometheusOperator:
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 20m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+
+# -----------------------------------------------------------------------------
+# K3s compatibility notes
+# -----------------------------------------------------------------------------
+# K3s does not expose kube-controller-manager, kube-scheduler, or kube-proxy
+# as separately scrapable Services. The chart's default rules for these would
+# fire endless "ScrapeFailure" alerts. Disable their scraping and the bundled
+# alerts.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false

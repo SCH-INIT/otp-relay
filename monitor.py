@@ -2,16 +2,17 @@
 # Runs as a separate monitor process/container.
 # Two parallel tasks:
 #   1. Phone watcher  — uses ARP checks for iPhone presence and writes
-#                       phone_online / phone_offline events to the audit log
-#   2. Alert forwarder — tails the audit log in real time and forwards
-#                        entries at or above ALERT_LEVEL to Telegram
-#                        via Bot API.
+#                       phone_online / phone_offline events to the audit log.
+#                       Also exposes Prometheus metrics on port 9101.
+#   2. Alert forwarder — tails the audit log and posts Telegram messages
+#                        for iPhone state changes (phone_online/phone_offline).
+#                        All other audit events are ignored here; they are
+#                        the responsibility of Alertmanager, which sees the
+#                        metric-driven view of the system.
 #
-# All events — including phone_* — flow through the same alert filter,
-# so ALERT_LEVEL controls everything uniformly.
-#
-# Message batching: events that arrive within BATCH_WINDOW_SEC are grouped
-# into one Telegram message to avoid flooding.
+# Telegram message grammar follows docs/dev/observability-design.md:
+#   <subject><severity> <short text>
+# This module emits 📱🔥 and 📱👍 only.
 
 import json
 import logging
@@ -23,8 +24,10 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -45,25 +48,11 @@ AUDIT_LOG_PATH = str(
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-ALERT_LEVEL = os.getenv("ALERT_LEVEL", "error").lower()
 PHONE_IP = os.getenv("PHONE_IP", "")
 PHONE_INTERFACE = os.getenv("PHONE_INTERFACE", "ens33")
 PHONE_PING_INTERVAL = int(os.getenv("PHONE_PING_INTERVAL", "300"))
 PHONE_OFFLINE_THRESHOLD = int(os.getenv("PHONE_OFFLINE_THRESHOLD", "2"))
-BATCH_WINDOW_SEC = int(os.getenv("BATCH_WINDOW_SEC", "10"))
-
-# Prefer an explicit URL for Kubernetes, where Service/Ingress naming may differ.
-_explicit_portal_url = os.getenv("PORTAL_URL", "").strip()
-_server_hostname = os.getenv("SERVER_HOSTNAME", "").strip()
-_server_ip = os.getenv("SERVER_IP", "").strip()
-PORTAL_URL = (
-    _explicit_portal_url or
-    (f"https://{_server_hostname}" if _server_hostname else "") or
-    (f"https://{_server_ip}" if _server_ip else "") or
-    "https://srvotp26.init-db.lan"
-)
-
-LEVEL_ORDER = {"info": 0, "warn": 1, "error": 2}
+METRICS_PORT = int(os.getenv("MONITOR_METRICS_PORT", "9101"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +60,51 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%SZ",
 )
 logger = logging.getLogger("otp-monitor")
+
+
+# ── Prometheus metrics ────────────────────────────────────────────────────────
+# Five metrics describing the iPhone-watching role of this process.
+# All use the otp_ prefix per docs/dev/naming-conventions.md.
+
+otp_iphone_present = Gauge(
+    "otp_iphone_present",
+    "Whether the iPhone is currently reachable (1) or absent (0).",
+)
+otp_iphone_absence_seconds = Gauge(
+    "otp_iphone_absence_seconds",
+    "Seconds since the iPhone went absent. 0 while present.",
+)
+otp_iphone_absence_events_total = Counter(
+    "otp_iphone_absence_events_total",
+    "Total number of present-to-absent transitions.",
+)
+otp_iphone_absence_duration_seconds = Histogram(
+    "otp_iphone_absence_duration_seconds",
+    "Distribution of absence durations, observed when the iPhone returns.",
+    buckets=(30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, float("inf")),
+)
+otp_monitor_arp_last_success_timestamp_seconds = Gauge(
+    "otp_monitor_arp_last_success_timestamp_seconds",
+    "Unix timestamp of the last successful ARP probe.",
+)
+
+# Initial state: assume present until proven otherwise. Updated by watch_phone().
+otp_iphone_present.set(1)
+otp_iphone_absence_seconds.set(0)
+
+
+# Internal state to drive otp_iphone_absence_seconds at scrape time.
+# Set when the iPhone transitions present -> absent; cleared on return.
+_absence_started_at: Optional[float] = None
+
+
+def _current_absence_seconds() -> float:
+    if _absence_started_at is None:
+        return 0.0
+    return max(0.0, time.time() - _absence_started_at)
+
+
+otp_iphone_absence_seconds.set_function(_current_absence_seconds)
 
 
 # ── Audit log writer ──────────────────────────────────────────────────────────
@@ -112,64 +146,63 @@ def send_telegram(message: str):
         logger.error(f"Telegram delivery failed: {e}")
 
 
-# ── Batching dispatcher ───────────────────────────────────────────────────────
-_batch = []
-_batch_lock = threading.Lock()
-_batch_timer = None
+# ── Grammar-based alert formatting ───────────────────────────────────────────
+# Messages follow the design in docs/dev/observability-design.md:
+#   <subject><severity> <short text>
+# Subjects: 📱 iPhone, 🚪 portal, 👁️ monitor, 🖥️ node, 💾 storage, 🎛️ cluster.
+# Severities: 🔥 critical, 👍 recovery, ⚠️ warning, ℹ️ info.
+#
+# This monitor process only sends iPhone state changes. Every other alert
+# class (pod down, node down, claim spikes, cert expiring, etc.) is the
+# responsibility of Alertmanager, which has the metrics to do it properly.
+# Single audit events that are not iPhone-related fall through silently.
 
 
-def _flush_batch():
-    global _batch, _batch_timer
-    with _batch_lock:
-        entries = _batch[:]
-        _batch = []
-        _batch_timer = None
+def _format_duration(seconds: float) -> str:
+    """Compact human duration: '47s', '8m', '2h 14m'."""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    hours, rest = divmod(seconds, 3600)
+    minutes = rest // 60
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
 
-    if not entries:
-        return
 
-    if len(entries) == 1:
-        e = entries[0]
-        icon = "🔴" if e.get("status") == "error" else "🟡"
-        msg = (
-            f"{icon} OTP Relay Alert\n"
-            f"[{e.get('status', 'info')}] {e.get('event', '')}"
-            + (f" | {e.get('token')}" if e.get("token") else "")
-            + (f"\n{e.get('detail')}" if e.get("detail") else "")
-            + f"\n\n🔗 {PORTAL_URL}/admin/log"
-        )
-    else:
-        lines = []
-        for e in entries:
-            icon = "🔴" if e.get("status") == "error" else "🟡"
-            line = f"{icon} [{e.get('status', 'info')}] {e.get('event', '')}"
-            if e.get("token"):
-                line += f" | {e.get('token')}"
-            if e.get("detail"):
-                line += f"\n   {e.get('detail')}"
-            lines.append(line)
-        msg = (
-            f"⚠️ OTP Relay — {len(entries)} alerts\n\n"
-            + "\n\n".join(lines)
-            + f"\n\n🔗 {PORTAL_URL}/admin/log"
-        )
+# Tracks when phone_offline fired, so phone_online can quote the duration.
+_phone_offline_at: Optional[float] = None
 
-    send_telegram(msg)
+
+def _format_alert(entry: dict) -> Optional[str]:
+    """
+    Map an audit entry to a Telegram message in the grammar.
+    Returns None if this event is not a monitor-side alert.
+    """
+    global _phone_offline_at
+    event = entry.get("event", "")
+
+    if event == "phone_offline":
+        _phone_offline_at = time.time()
+        return "📱🔥 iPhone offline. Last seen just now."
+
+    if event == "phone_online":
+        if _phone_offline_at is not None:
+            dur = _format_duration(time.time() - _phone_offline_at)
+            _phone_offline_at = None
+            return f"📱👍 iPhone back. Was offline {dur}."
+        # We never saw the offline event (monitor restarted while offline).
+        return "📱👍 iPhone back."
+
+    # Anything else: not the monitor's job. Alertmanager will handle it.
+    return None
 
 
 def dispatch(entry: dict):
-    """Add entry to batch; start flush timer if not already running."""
-    global _batch_timer
-    with _batch_lock:
-        _batch.append(entry)
-        if _batch_timer is None:
-            _batch_timer = threading.Timer(BATCH_WINDOW_SEC, _flush_batch)
-            _batch_timer.daemon = True
-            _batch_timer.start()
-
-
-def should_alert(status: str) -> bool:
-    return LEVEL_ORDER.get(status, 0) >= LEVEL_ORDER.get(ALERT_LEVEL, 2)
+    """Format the entry per the grammar; send if a message was produced."""
+    msg = _format_alert(entry)
+    if msg:
+        send_telegram(msg)
 
 
 # ── Log tailer ────────────────────────────────────────────────────────────────
@@ -197,13 +230,14 @@ def tail_audit_log():
                 continue
             try:
                 entry = json.loads(line)
-                status = entry.get("status", "info")
                 event = entry.get("event", "")
                 # Never alert on our own monitor_start event to avoid loops.
                 if event == "monitor_start":
                     continue
-                if should_alert(status):
-                    dispatch(entry)
+                # dispatch() decides whether the event warrants a Telegram
+                # message; non-iPhone events are silently dropped here and
+                # handled by Alertmanager downstream.
+                dispatch(entry)
             except json.JSONDecodeError:
                 continue
 
@@ -253,7 +287,17 @@ def watch_phone():
 
     while True:
         if ping(PHONE_IP):
+            otp_monitor_arp_last_success_timestamp_seconds.set(time.time())
             if not phone_online:
+                # Present-after-absent transition: record the absence duration
+                # and reset absence state.
+                global _absence_started_at
+                if _absence_started_at is not None:
+                    duration = max(0.0, time.time() - _absence_started_at)
+                    otp_iphone_absence_duration_seconds.observe(duration)
+                _absence_started_at = None
+                otp_iphone_present.set(1)
+
                 phone_online = True
                 consecutive_failures = 0
                 audit("phone_online", f"iPhone {PHONE_IP} is reachable again", "error")
@@ -266,6 +310,12 @@ def watch_phone():
                 logger.info(f"ARP failed ({consecutive_failures}/{PHONE_OFFLINE_THRESHOLD})")
 
             if phone_online and consecutive_failures >= PHONE_OFFLINE_THRESHOLD:
+                # Online-to-absent transition: count the event and start the
+                # absence timer. The gauge updates on demand via set_function.
+                _absence_started_at = time.time()
+                otp_iphone_absence_events_total.inc()
+                otp_iphone_present.set(0)
+
                 phone_online = False
                 audit(
                     "phone_offline",
@@ -282,10 +332,17 @@ if __name__ == "__main__":
     logger.info("OTP Monitor starting")
     audit(
         "monitor_start",
-        f"alert_level={ALERT_LEVEL} phone_ip={PHONE_IP or 'not set'} "
+        f"phone_ip={PHONE_IP or 'not set'} "
         f"interface={PHONE_INTERFACE} ping_interval={PHONE_PING_INTERVAL}s",
         "info",
     )
+
+    # Start the Prometheus metrics endpoint on its own port.
+    # Binds 0.0.0.0:9101; on the monitor pod (hostNetwork: true) this means
+    # the node's LAN-facing interface. Accepted exposure — metrics carry no
+    # secrets and the cluster is on the company LAN.
+    start_http_server(METRICS_PORT)
+    logger.info(f"Prometheus metrics on :{METRICS_PORT}/metrics")
 
     phone_thread = threading.Thread(target=watch_phone, daemon=True)
     phone_thread.start()

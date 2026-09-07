@@ -7,10 +7,13 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`srvotp26.init-db.lan`)
+    # Browsers hit the portal at the DNS name.
+    # iPhone Shortcut hits the same Traefik on the IP directly (DNS-flakiness
+    # workaround documented in docs/dev/naming-conventions.md).
+    - match: Host(`rta.init-db.lan`) || Host(`172.31.10.84`)
       kind: Rule
       services:
         - name: otp-relay
           port: 80
-  tls:
-    secretName: otp-relay-tls
+  # No per-IngressRoute TLS section: Traefik serves the cluster-wide wildcard
+  # cert (wildcard-init-db-lan in kube-system) from its default tlsStore.

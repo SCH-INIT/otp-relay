@@ -7,7 +7,6 @@ slug: notes-and-tips
 
 # Notes and tips
 
-<!-- wizard:install_vpn -->
 ## Usage and renewal tips
 
 - When finished with the Ubuntu Terminal Server, use **Log Out** from the Ubuntu session. Do not just close the browser tab.
@@ -17,9 +16,6 @@ slug: notes-and-tips
 - RTA passwords also expire after 90 days.
 - The system may not send reminders automatically.
 - It can take roughly 2 to 3 weeks to obtain access to the RTA servers.
-<!-- /wizard -->
-
-<!-- wizard:install_vpn -->
 ## Test server and file-transfer flow
 
 To connect to the test servers:
@@ -36,4 +32,3 @@ To copy files to the RTA environment:
 4. Log in remotely to the target test or production server.
 5. Use WinSCP on the remote side to connect to the SFTP server.
 6. Copy files from the SFTP server to the target server.
-<!-- /wizard -->

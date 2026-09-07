@@ -5,13 +5,14 @@
 # Delivery model: OTP is displayed on-screen via polling.
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
 import re
 import secrets
 import threading
+import urllib.parse
+import urllib.request
 from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import bcrypt
 import openpyxl
 from dotenv import load_dotenv
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 try:
     import redis
@@ -29,9 +31,9 @@ except ImportError:
     redis = None
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -53,8 +55,87 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# -- Prometheus metrics -------------------------------------------------------
+# These metrics describe the OTP-relay subsystem (the queue, the iPhone path).
+# Naming follows docs/dev/naming-conventions.md: otp_* prefix for OTP-relay
+# machinery; non-OTP portal features would use rta_* or portal_* later.
+#
+# Counters are incremented inside audit() via the OTP_AUDIT_COUNTERS table.
+# Gauges (queue depth, active user) are measured on demand at scrape time.
+
+otp_claims_total = Counter(
+    "otp_claims_total",
+    "Total number of times a user claimed the active slot.",
+)
+otp_delivered_total = Counter(
+    "otp_delivered_total",
+    "Total number of OTPs successfully delivered to a recipient.",
+)
+otp_claim_expired_total = Counter(
+    "otp_claim_expired_total",
+    "Total number of claims that timed out without an OTP arriving.",
+)
+otp_request_duration_seconds = Histogram(
+    "otp_request_duration_seconds",
+    "HTTP request duration in seconds.",
+    ["method", "endpoint", "status"],
+)
+
+# Audit-event-name to counter mapping. Hook is in audit() below.
+OTP_AUDIT_COUNTERS = {
+    "claim_queued": otp_claims_total,
+    "otp_delivered": otp_delivered_total,
+    "claim_expired": otp_claim_expired_total,
+}
+
+# Gauges measured on demand. The set_function callbacks are invoked by
+# prometheus_client at scrape time, so the returned values are always live.
+# Defined further down once the underlying queue state is available; see
+# _attach_gauge_callbacks() at module-load tail.
+otp_queue_depth = Gauge(
+    "otp_queue_depth",
+    "Current number of OTPs pending delivery (claim queue depth).",
+)
+otp_active_user = Gauge(
+    "otp_active_user",
+    "Whether someone currently holds the active slot (1) or not (0).",
+)
+
+
+@app.middleware("http")
+async def _record_request_duration(request: Request, call_next):
+    """Record per-request latency in the otp_request_duration_seconds histogram.
+
+    The 'endpoint' label is the route's path template (e.g. /claim-status/{token}),
+    not the actual URL, so we don't blow up cardinality with one series per
+    distinct token. Falls back to the raw path if no route matched (404, etc.).
+    """
+    import time as _time
+    start = _time.perf_counter()
+    response = await call_next(request)
+    elapsed = _time.perf_counter() - start
+
+    route = request.scope.get("route")
+    endpoint = getattr(route, "path", None) or "unknown"
+    otp_request_duration_seconds.labels(
+        method=request.method,
+        endpoint=endpoint,
+        status=str(response.status_code),
+    ).observe(elapsed)
+    return response
+
+
+# Expose /metrics as a regular route rather than a sub-app mount.
+# An app.mount() requires a trailing slash from clients (Prometheus and curl
+# alike), which is fiddly. A plain GET route handles /metrics cleanly.
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 # -- Config -------------------------------------------------------------------
 SMS_SECRET_TOKEN = os.getenv("SMS_SECRET_TOKEN", "changeme")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # How long the active user has to trigger their OTP before being evicted.
 # Other users wait until this window expires or OTP is delivered.
@@ -131,20 +212,24 @@ logging.basicConfig(
 logger = logging.getLogger("otp-relay")
 redis_client = None
 
-# -- Server-backed wizard/admin state -----------------------------------------
+# -- Server-backed admin state ------------------------------------------------
 DATA_DIR = _resolve_runtime_path(os.environ.get("OTP_RELAY_DATA_DIR", "data"))
-WIZARD_FILE = DATA_DIR / "wizard_progress.json"
+LEGACY_WIZARD_FILE = DATA_DIR / "wizard_progress.json"
 AUTH_FILE = DATA_DIR / "admin_auth.json"
 CONFIG_FILE = DATA_DIR / "admin_config.json"
+ADMIN_PROFILES_FILE = DATA_DIR / "admin_profiles.json"
 DEFAULT_ADMIN_TOKENS = ["JPR", "AMD", "SCH"]
-ADMIN_TTL_SECONDS = 8 * 60 * 60
-ADMIN_SESSIONS: Dict[str, float] = {}
+ADMIN_TTL_SECONDS = 1 * 60 * 60  # 1-hour sliding session for admin users
+ADMIN_SESSIONS: Dict[str, Dict[str, Any]] = {}  # session → {"ts": float, "who": str}
 ADMIN_LOGIN_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
 ADMIN_LOGIN_WINDOW_SECONDS = int(os.getenv("ADMIN_LOGIN_WINDOW_SECONDS", "300"))
 ADMIN_LOGIN_MAX_ATTEMPTS = int(os.getenv("ADMIN_LOGIN_MAX_ATTEMPTS", "8"))
 ADMIN_LOGIN_LOCKOUT_SECONDS = int(os.getenv("ADMIN_LOGIN_LOCKOUT_SECONDS", "900"))
-WIZARD_DB_LOCK = threading.Lock()
-WIZARD_CLIENT_SECRET_MIN_LENGTH = int(os.getenv("WIZARD_CLIENT_SECRET_MIN_LENGTH", "32"))
+# PIN reset codes — stored in memory (+ Redis when available) with a short TTL
+ADMIN_RESET_CODES: Dict[str, Dict[str, Any]] = {}  # token → {"code": str, "expires": float}
+REDIS_ADMIN_RESET_PREFIX = "admin:reset:"
+ADMIN_RESET_TTL_SECONDS = 15 * 60  # codes expire after 15 minutes
+ADMIN_PROFILES_LOCK = threading.Lock()
 
 
 def _utcnow_naive() -> datetime:
@@ -222,6 +307,73 @@ def _redis_pending_key(token: str) -> str:
 
 def _redis_admin_session_key(session: str) -> str:
     return f"{REDIS_ADMIN_SESSION_PREFIX}{session}"
+
+
+def _redis_admin_reset_key(token: str) -> str:
+    return f"{REDIS_ADMIN_RESET_PREFIX}{token}"
+
+
+def _generate_reset_code() -> str:
+    """Generate a 7-character reset code like X7K-29M.
+    Avoids visually ambiguous characters (0, O, I, 1) so it's easy to read."""
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    a = "".join(secrets.choice(chars) for _ in range(3))
+    b = "".join(secrets.choice(chars) for _ in range(3))
+    return f"{a}-{b}"
+
+
+def _store_reset_code(token: str, code: str) -> None:
+    expires = datetime.now(timezone.utc).timestamp() + ADMIN_RESET_TTL_SECONDS
+    entry = {"code": code, "expires": expires}
+    ADMIN_RESET_CODES[token] = entry
+    if _use_redis_state():
+        try:
+            redis_client.setex(_redis_admin_reset_key(token), ADMIN_RESET_TTL_SECONDS, json.dumps(entry))
+        except Exception as exc:
+            logger.warning("Could not store reset code in Redis: %s", exc)
+
+
+def _validate_and_consume_reset_code(token: str, code: str) -> bool:
+    """Return True and consume the code if it is valid and unexpired."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    if _use_redis_state():
+        try:
+            raw = redis_client.get(_redis_admin_reset_key(token))
+            if raw:
+                entry = json.loads(raw)
+                if entry.get("expires", 0) > now_ts and entry.get("code", "") == code:
+                    redis_client.delete(_redis_admin_reset_key(token))
+                    ADMIN_RESET_CODES.pop(token, None)
+                    return True
+            return False
+        except Exception as exc:
+            logger.warning("Redis reset code validation failed, falling back: %s", exc)
+
+    entry = ADMIN_RESET_CODES.get(token)
+    if entry and entry.get("expires", 0) > now_ts and entry.get("code", "") == code:
+        ADMIN_RESET_CODES.pop(token, None)
+        return True
+    return False
+
+
+def _send_telegram(message: str) -> None:
+    """Send a plain-text or HTML Telegram message. Fire-and-forget; logs but never raises."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("Telegram not configured — skipping message")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML",
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            logger.info("Telegram message sent: %s", resp.read()[:80])
+    except Exception as exc:
+        logger.error("Telegram delivery failed: %s", exc)
 
 
 def _redis_admin_login_attempt_key(client_ip: str) -> str:
@@ -444,14 +596,6 @@ def _write_json(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
-def _wizard_db() -> Dict[str, dict]:
-    return _read_json(WIZARD_FILE, {})
-
-
-def _save_wizard_db(db: Dict[str, dict]) -> None:
-    _write_json(WIZARD_FILE, db)
-
-
 def _auth_db() -> Dict[str, Any]:
     return _read_json(AUTH_FILE, {})
 
@@ -470,6 +614,72 @@ def _save_config_db(db: Dict[str, Any]) -> None:
     _write_json(CONFIG_FILE, db)
 
 
+ADMIN_PROFILE_FIELDS = (
+    "display_name",
+    "iits_username",
+    "adm_username",
+    "iits_pw_date",
+    "adm_pw_date",
+    "vpn_date",
+)
+
+
+def _default_admin_profile(token: str) -> Dict[str, Any]:
+    user = users.get(token, {})
+    return {
+        "display_name": user.get("name", ""),
+        "iits_username": "",
+        "adm_username": "",
+        "iits_pw_date": None,
+        "adm_pw_date": None,
+        "vpn_date": None,
+    }
+
+
+def _admin_profiles_db() -> Dict[str, Dict[str, Any]]:
+    """Read profiles and lazily migrate profile fields from legacy Wizard data.
+
+    The legacy file remains untouched for rollback/recovery. Only currently
+    configured admin tokens are migrated. Callers hold ADMIN_PROFILES_LOCK.
+    """
+    db = _read_json(ADMIN_PROFILES_FILE, {})
+    if not isinstance(db, dict):
+        db = {}
+
+    legacy = _read_json(LEGACY_WIZARD_FILE, {})
+    configured = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    changed = False
+    if isinstance(legacy, dict):
+        for raw_token in configured:
+            token = str(raw_token or "").strip().upper()
+            if not token or token in db:
+                continue
+            legacy_row = legacy.get(token)
+            if not isinstance(legacy_row, dict) or not any(field in legacy_row for field in ADMIN_PROFILE_FIELDS):
+                continue
+            defaults = _default_admin_profile(token)
+            db[token] = {
+                field: legacy_row.get(field, defaults[field])
+                for field in ADMIN_PROFILE_FIELDS
+            }
+            changed = True
+
+    if changed:
+        _write_json(ADMIN_PROFILES_FILE, db)
+    return db
+
+
+def _require_profile_admin(session: Optional[str]) -> str:
+    who = _require_admin(session).strip().upper()
+    configured = {
+        str(token or "").strip().upper()
+        for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    }
+    if who not in configured:
+        raise HTTPException(status_code=403, detail="Admin is no longer configured")
+    return who
+
+
 def _purge_admin_sessions() -> None:
     """Expire stale in-memory admin sessions.
 
@@ -480,21 +690,21 @@ def _purge_admin_sessions() -> None:
         return
 
     now_ts = datetime.now(timezone.utc).timestamp()
-    stale = [session for session, ts in ADMIN_SESSIONS.items() if now_ts - ts > ADMIN_TTL_SECONDS]
+    stale = [s for s, meta in ADMIN_SESSIONS.items() if now_ts - float(meta.get("ts", 0)) > ADMIN_TTL_SECONDS]
     for session in stale:
         ADMIN_SESSIONS.pop(session, None)
 
 
-def _create_admin_session() -> str:
+def _create_admin_session(who: str) -> str:
     session = secrets.token_urlsafe(24)
     now_ts = datetime.now(timezone.utc).timestamp()
+    meta = {"ts": now_ts, "who": who}
 
-    # Keep the local copy as a fallback while REDIS_REQUIRED=0.
-    ADMIN_SESSIONS[session] = now_ts
+    ADMIN_SESSIONS[session] = meta
 
     if _use_redis_state():
         try:
-            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, str(now_ts))
+            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, json.dumps(meta))
         except Exception as exc:
             if REDIS_REQUIRED:
                 raise HTTPException(status_code=503, detail="Redis admin session store is unavailable") from exc
@@ -515,7 +725,8 @@ def _delete_admin_session(session: str) -> None:
             logger.warning("Could not delete admin session from Redis: %s", exc)
 
 
-def _require_admin(session: Optional[str]) -> None:
+def _require_admin(session: Optional[str]) -> str:
+    """Validate admin session and return the admin token (who) associated with it."""
     if not session:
         raise HTTPException(status_code=401, detail="Missing admin session")
 
@@ -523,14 +734,28 @@ def _require_admin(session: Optional[str]) -> None:
 
     if _use_redis_state():
         try:
-            existing = redis_client.get(_redis_admin_session_key(session))
-            if not existing:
-                raise HTTPException(status_code=401, detail="Invalid admin session")
+            raw = redis_client.get(_redis_admin_session_key(session))
+            if not raw:
+                raise HTTPException(status_code=401, detail="Invalid or expired admin session")
+
+            try:
+                meta = json.loads(raw)
+            except Exception:
+                meta = {"ts": float(raw), "who": "unknown"}
+
+            who = str(meta.get("who", "unknown")).strip().upper()
+            configured = {
+                str(token or "").strip().upper()
+                for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+            }
+            if who not in configured:
+                raise HTTPException(status_code=403, detail="Admin is no longer configured")
 
             # Sliding expiration: every valid admin request refreshes the session TTL.
-            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, str(now_ts))
-            ADMIN_SESSIONS[session] = now_ts
-            return
+            meta["ts"] = now_ts
+            redis_client.setex(_redis_admin_session_key(session), ADMIN_TTL_SECONDS, json.dumps(meta))
+            ADMIN_SESSIONS[session] = meta
+            return who
         except HTTPException:
             raise
         except Exception as exc:
@@ -539,17 +764,18 @@ def _require_admin(session: Optional[str]) -> None:
             logger.warning("Could not validate admin session in Redis; using in-memory fallback: %s", exc)
 
     _purge_admin_sessions()
-    ts = ADMIN_SESSIONS.get(session)
-    if not ts:
-        raise HTTPException(status_code=401, detail="Invalid admin session")
-    ADMIN_SESSIONS[session] = now_ts
-
-
-def _model_dump(model: BaseModel) -> Dict[str, Any]:
-    """Support both Pydantic v1 and v2."""
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
+    meta = ADMIN_SESSIONS.get(session)
+    if not meta:
+        raise HTTPException(status_code=401, detail="Invalid or expired admin session")
+    who = str(meta.get("who", "unknown")).strip().upper()
+    configured = {
+        str(token or "").strip().upper()
+        for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    }
+    if who not in configured:
+        raise HTTPException(status_code=403, detail="Admin is no longer configured")
+    meta["ts"] = now_ts
+    return who
 
 
 def _client_ip(request: Request) -> str:
@@ -643,79 +869,30 @@ def _record_login_success(request: Request) -> None:
     _delete_login_attempt_row(_client_ip(request))
 
 
-def _hash_wizard_secret(secret: str) -> str:
-    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
-
-
-def _valid_wizard_owner(row: Dict[str, Any], client_secret: Optional[str]) -> bool:
-    stored_hash = str(row.get("client_secret_hash") or "")
-    if not stored_hash or not client_secret or len(client_secret) < WIZARD_CLIENT_SECRET_MIN_LENGTH:
-        return False
-    return secrets.compare_digest(stored_hash, _hash_wizard_secret(client_secret))
-
-
-def _bind_wizard_client(row: Dict[str, Any], client_secret: Optional[str]) -> bool:
-    """Silently bind or rebind a wizard record to the current browser client.
-
-    The user token is the durable owner of wizard progress. The client secret is
-    only a background edit marker, so stale PVC/browser state must not block a
-    valid token from continuing its own wizard progress.
-    """
-    if not client_secret or len(client_secret) < WIZARD_CLIENT_SECRET_MIN_LENGTH:
-        raise HTTPException(status_code=401, detail="Wizard client secret required")
-
-    current_hash = _hash_wizard_secret(client_secret)
-    if secrets.compare_digest(str(row.get("client_secret_hash") or ""), current_hash):
-        return False
-
-    row["client_secret_hash"] = current_hash
-    row["client_bound_at"] = _now_iso()
-    return True
-
-
-def _public_wizard_record(row: Dict[str, Any]) -> Dict[str, Any]:
-    public = dict(row)
-    public.pop("client_secret_hash", None)
-    return public
-
-
-def _default_wizard_record(token: str) -> Dict[str, Any]:
-    return {
-        "token": token,
-        "display_name": users[token]["name"],
-        "iits_username": "",
-        "adm_username": "",
-        "completed": [],
-        "adminCompleted": [],
-        "iits_pw_date": None,
-        "adm_pw_date": None,
-        "vpn_date": None,
-        "test_env": users[token].get("test_env", ""),
-        "prod_env": users[token].get("prod_env", ""),
-    }
-
-
-class WizardRecord(BaseModel):
-    token: str
+class AdminProfilePayload(BaseModel):
     display_name: str = ""
     iits_username: str = ""
     adm_username: str = ""
-    completed: List[str] = Field(default_factory=list)
-    adminCompleted: List[str] = Field(default_factory=list)
     iits_pw_date: Optional[str] = None
     adm_pw_date: Optional[str] = None
     vpn_date: Optional[str] = None
-    test_env: str = ""
-    prod_env: str = ""
 
 
 class UserLoginPayload(BaseModel):
     token: str
+    pin: Optional[str] = None          # required for admin tokens
+    confirm_pin: Optional[str] = None  # required when setting a PIN for the first time
+    admin_session: Optional[str] = None  # existing session token for silent page-reload restore
 
 
 class CredentialPayload(BaseModel):
-    credential: str
+    token: Optional[str] = None
+    credential: Optional[str] = None
     current: Optional[str] = None
+
+
+class TokenPayload(BaseModel):
+    token: str
 
 
 class ConfigPayload(BaseModel):
@@ -730,8 +907,8 @@ def load_users_from_excel(path: str, replace_existing: bool = True) -> int:
       name     - display name
       email    - company email address
     Optional columns:
-      test_env - test environment assignment shown in the admin wizard
-      prod_env - production environment assignment shown in the admin wizard
+      test_env - test environment assignment retained for operational imports
+      prod_env - production environment assignment retained for operational imports
     Column names are case-insensitive. Spaces, dashes, and underscores are tolerated.
     Skipped rows are written to the audit log so IT can fix them.
     """
@@ -839,6 +1016,13 @@ def audit(event: str, token: Optional[str] = None, detail: str = "", status: str
     level = {"info": logging.INFO, "warn": logging.WARNING, "error": logging.ERROR}.get(status, logging.INFO)
     logger.log(level, "[%s] token=%s  %s", event, token or "-", detail)
 
+    # Bump the matching Prometheus counter, if this event has one.
+    # Keeping the increment here means both the Redis and in-memory queue paths
+    # are covered by the single audit() call site each path already uses.
+    counter = OTP_AUDIT_COUNTERS.get(event)
+    if counter is not None:
+        counter.inc()
+
 
 def read_audit_log(limit: int = 200) -> list:
     limit = max(1, min(int(limit or 200), 2000))
@@ -943,16 +1127,7 @@ async def readyz():
     }
 
 
-@app.post("/user/login")
-async def user_login(payload: UserLoginPayload):
-    """Validate one user token without exposing the full admin-only user directory."""
-    token = str(payload.token or "").strip().upper()
-    if token not in users:
-        audit("user_login_failed", token=token, detail="Unknown token", status="warn")
-        raise HTTPException(status_code=404, detail="Token not recognised. Check with IT.")
-
-    user = users[token]
-    audit("user_login", token=token, detail="User token validated")
+def _user_fields(user: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "token": user["token"],
         "name": user["name"],
@@ -960,6 +1135,73 @@ async def user_login(payload: UserLoginPayload):
         "test_env": user.get("test_env", ""),
         "prod_env": user.get("prod_env", ""),
     }
+
+
+@app.post("/user/login")
+async def user_login(payload: UserLoginPayload, request: Request):
+    """Validate a user token.  Admin tokens additionally require a PIN.
+
+    Flow:
+    • Non-admin token          → returns user fields immediately (no PIN involved).
+    • Admin token, no pin sent → returns {requires_pin, needs_setup} so the
+                                  frontend can reveal the PIN field inline.
+    • Admin token + valid pin  → returns user fields + admin_session.
+    • Admin token + admin_session still valid (page reload) → restores silently.
+    """
+    token = str(payload.token or "").strip().upper()
+    if token not in users:
+        audit("user_login_failed", token=token, detail="Unknown token", status="warn")
+        raise HTTPException(status_code=404, detail="Token not recognised. Check with IT.")
+
+    user = users[token]
+    admin_token_list = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+
+    if token not in admin_token_list:
+        # Regular user — no PIN needed
+        audit("user_login", token=token, detail="User token validated")
+        return _user_fields(user)
+
+    # ── Admin token ────────────────────────────────────────────────────────────
+    hashes = _auth_hashes(_auth_db())
+    has_pin = token in hashes
+
+    # Silent restore: existing admin session passed in on page reload
+    if payload.admin_session:
+        try:
+            who = _require_admin(payload.admin_session)
+            if who == token:
+                audit("user_login", token=token, detail="Admin session restored silently")
+                return {**_user_fields(user), "admin_session": payload.admin_session, "is_admin": True}
+        except HTTPException:
+            pass  # Session expired — fall through to PIN check
+
+    # No PIN provided yet → tell the frontend to reveal the PIN field
+    if not payload.pin:
+        return {**_user_fields(user), "requires_pin": True, "needs_setup": not has_pin}
+
+    pin = (payload.pin or "").strip()
+
+    if not has_pin:
+        # First-time setup (or post-reset)
+        if len(pin) < 4:
+            raise HTTPException(status_code=400, detail="PIN too short — use at least 4 characters")
+        confirm = (payload.confirm_pin or "").strip()
+        if pin != confirm:
+            raise HTTPException(status_code=400, detail="PINs do not match — try again 🙈")
+        hashes[token] = bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+        audit("admin_pin_setup", token=token, detail=f"PIN set for {token}")
+    else:
+        _check_login_rate_limit(request)
+        if not bcrypt.checkpw(pin.encode("utf-8"), hashes[token].encode("utf-8")):
+            _record_login_failure(request)
+            audit("admin_auth_failed", token=token, detail=f"Wrong PIN for {token}", status="warn")
+            raise HTTPException(status_code=401, detail="Wrong PIN — try again 🔒")
+        _record_login_success(request)
+
+    admin_session = _create_admin_session(token)
+    audit("admin_auth_login", token=token, detail=f"Admin session created for {token}")
+    return {**_user_fields(user), "admin_session": admin_session, "is_admin": True}
 
 
 @app.post("/claim-otp")
@@ -1345,53 +1587,188 @@ async def reload_users(x_admin_session: Optional[str] = Header(default=None)):
     return {"status": "ok", "users_loaded": count}
 
 
-# -- Wizard/admin server-backed endpoints -------------------------------------
+# -- Admin server-backed endpoints --------------------------------------------
+def _auth_hashes(db: Dict[str, Any]) -> Dict[str, str]:
+    """Return the per-user hash map, migrating from the legacy single-hash format if needed."""
+    if "hashes" in db:
+        return dict(db["hashes"])
+    # Legacy: single shared password_hash — migrate to a map under the sentinel key "admin"
+    if db.get("password_hash"):
+        return {"admin": db["password_hash"]}
+    return {}
+
+
 @app.get("/admin/auth/status")
 async def admin_auth_status():
-    return {"configured": bool(_auth_db().get("password_hash"))}
+    db = _auth_db()
+    hashes = _auth_hashes(db)
+    admin_tokens = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    configured_tokens = [t for t in admin_tokens if t in hashes]
+    return {
+        "configured": bool(hashes),
+        "configured_tokens": configured_tokens,
+        "admin_tokens": admin_tokens,
+    }
 
 
 @app.post("/admin/auth/setup")
 async def admin_auth_setup(payload: CredentialPayload):
+    who = (payload.token or "").strip().upper()
     cred = (payload.credential or "").strip()
     if len(cred) < 4:
-        raise HTTPException(status_code=400, detail="Credential too short")
+        raise HTTPException(status_code=400, detail="Credential too short (minimum 4 characters)")
+
+    cfg = _config_db()
+    admin_tokens = cfg.get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+
+    if not who or who not in admin_tokens:
+        raise HTTPException(status_code=403, detail="Token is not in the admin tokens list")
+
     db = _auth_db()
-    if db.get("password_hash"):
+    hashes = _auth_hashes(db)
+
+    if who in hashes:
         if not payload.current:
-            raise HTTPException(status_code=400, detail="Current credential required")
-        if not bcrypt.checkpw(payload.current.encode("utf-8"), db["password_hash"].encode("utf-8")):
+            raise HTTPException(status_code=400, detail="Current credential required to change password")
+        if not bcrypt.checkpw(payload.current.encode("utf-8"), hashes[who].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Current credential incorrect")
-    hashed = bcrypt.hashpw(cred.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    _save_auth_db({"password_hash": hashed, "updated_at": _now_iso()})
-    session = _create_admin_session()
-    audit("admin_auth_setup", detail="Admin credential configured")
-    return {"status": "ok", "session": session}
+
+    hashes[who] = bcrypt.hashpw(cred.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+    session = _create_admin_session(who)
+    audit("admin_auth_setup", detail=f"Admin credential set for {who}")
+    return {"status": "ok", "session": session, "who": who}
 
 
 @app.post("/admin/auth/login")
 async def admin_auth_login(payload: CredentialPayload, request: Request):
     _check_login_rate_limit(request)
 
+    who = (payload.token or "").strip().upper()
+    if not who:
+        raise HTTPException(status_code=400, detail="Token required")
+
     db = _auth_db()
-    stored = db.get("password_hash")
+    hashes = _auth_hashes(db)
+
+    # Generic error message — do not reveal whether the token exists or not
+    _invalid = HTTPException(status_code=401, detail="Invalid token or credential")
+
+    configured = {
+        str(token or "").strip().upper()
+        for token in _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    }
+    if who not in configured:
+        _record_login_failure(request)
+        audit("admin_auth_failed", detail=f"Login attempt for removed admin token {who}", status="warn")
+        raise _invalid
+
+    stored = hashes.get(who)
     if not stored:
-        raise HTTPException(status_code=400, detail="Admin credential not configured")
+        _record_login_failure(request)
+        audit("admin_auth_failed", detail=f"Login attempt for unconfigured token {who}", status="warn")
+        raise _invalid
+
     if not bcrypt.checkpw((payload.credential or "").encode("utf-8"), stored.encode("utf-8")):
         _record_login_failure(request)
-        audit("admin_auth_failed", detail="Incorrect admin credential", status="warn")
-        raise HTTPException(status_code=401, detail="Incorrect credential")
+        audit("admin_auth_failed", detail=f"Incorrect credential for {who}", status="warn")
+        raise _invalid
+
     _record_login_success(request)
-    session = _create_admin_session()
-    audit("admin_auth_login", detail="Admin session opened")
-    return {"status": "ok", "session": session}
+    session = _create_admin_session(who)
+    audit("admin_auth_login", detail=f"Admin session opened for {who}")
+    return {"status": "ok", "session": session, "who": who}
 
 
 @app.post("/admin/auth/logout")
 async def admin_auth_logout(x_admin_session: Optional[str] = Header(default=None)):
     if x_admin_session:
+        # Retrieve who before deleting so we can audit it
+        try:
+            meta = ADMIN_SESSIONS.get(x_admin_session, {})
+            who = meta.get("who", "unknown") if isinstance(meta, dict) else "unknown"
+        except Exception:
+            who = "unknown"
         _delete_admin_session(x_admin_session)
+        audit("admin_auth_logout", detail=f"Admin session closed for {who}")
     return {"status": "ok"}
+
+
+@app.post("/admin/auth/reset-request")
+async def admin_pin_reset_request(payload: TokenPayload, request: Request):
+    """Send a one-time reset code to Telegram for a locked-out admin."""
+    who = (payload.token or "").strip().upper()
+    if not who:
+        raise HTTPException(status_code=400, detail="Token required")
+
+    admin_token_list = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    if who not in admin_token_list:
+        # Generic response — don't reveal which tokens are admin
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    _check_login_rate_limit(request)
+
+    code = _generate_reset_code()
+    _store_reset_code(who, code)
+
+    msg = (
+        f"🔑 <b>Admin PIN reset requested</b>\n\n"
+        f"Token <b>{who}</b> needs a new PIN.\n\n"
+        f"Reset code — tap to copy 👇\n"
+        f"<code>{code}</code>\n\n"
+        f"⏰ Valid for <b>15 minutes</b> · single use only\n\n"
+        f"🙈 Wasn't <b>{who}</b>? Someone might be sniffing around.\n"
+        f"Give another admin a heads-up! 🚨"
+    )
+    _send_telegram(msg)
+    audit("admin_pin_reset_requested", token=who, detail=f"PIN reset code sent for {who}")
+    return {"status": "ok"}
+
+
+@app.post("/admin/auth/reset-confirm")
+async def admin_pin_reset_confirm(payload: CredentialPayload, request: Request):
+    """Validate the Telegram reset code and clear the PIN so the user can set a new one."""
+    who = (payload.token or "").strip().upper()
+    code = (payload.credential or "").strip().upper()
+
+    if not who or not code:
+        raise HTTPException(status_code=400, detail="Token and code required")
+
+    _check_login_rate_limit(request)
+
+    if not _validate_and_consume_reset_code(who, code):
+        _record_login_failure(request)
+        audit("admin_pin_reset_failed", token=who, detail="Invalid or expired reset code", status="warn")
+        raise HTTPException(status_code=401, detail="Invalid or expired reset code 🔒")
+
+    _record_login_success(request)
+    db = _auth_db()
+    hashes = _auth_hashes(db)
+    hashes.pop(who, None)
+    _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+    audit("admin_pin_reset_confirmed", token=who, detail=f"PIN cleared for {who} — fresh setup required")
+    return {"status": "ok", "needs_setup": True}
+
+
+@app.post("/admin/auth/reset-peer")
+async def admin_pin_reset_peer(payload: TokenPayload, x_admin_session: Optional[str] = Header(default=None)):
+    """Logged-in admin resets another admin's PIN (clears the hash)."""
+    actor = _require_admin(x_admin_session)
+    target = (payload.token or "").strip().upper()
+
+    if not target:
+        raise HTTPException(status_code=400, detail="Target token required")
+
+    admin_token_list = _config_db().get("admin_tokens", DEFAULT_ADMIN_TOKENS)
+    if target not in admin_token_list:
+        raise HTTPException(status_code=404, detail="Token not in admin list")
+
+    db = _auth_db()
+    hashes = _auth_hashes(db)
+    hashes.pop(target, None)
+    _save_auth_db({"hashes": hashes, "updated_at": _now_iso()})
+    audit("admin_pin_reset_peer", token=target, detail=f"PIN reset by {actor} for {target}")
+    return {"status": "ok", "target": target}
 
 
 @app.get("/admin/config")
@@ -1413,123 +1790,54 @@ async def admin_config_save(payload: ConfigPayload, x_admin_session: Optional[st
     return {"status": "ok", "admin_tokens": tokens}
 
 
-@app.post("/wizard/progress")
-async def wizard_progress_save(
-    payload: WizardRecord,
-    x_wizard_client: Optional[str] = Header(default=None),
+@app.get("/admin/profile")
+async def admin_profile(x_admin_session: Optional[str] = Header(default=None)):
+    who = _require_profile_admin(x_admin_session)
+    with ADMIN_PROFILES_LOCK:
+        db = _admin_profiles_db()
+        stored = db.get(who, {})
+        if not isinstance(stored, dict):
+            stored = {}
+        profile = {**_default_admin_profile(who), **stored}
+    return {"token": who, **{field: profile.get(field) for field in ADMIN_PROFILE_FIELDS}}
+
+
+@app.post("/admin/profile")
+async def admin_profile_save(
+    payload: AdminProfilePayload,
     x_admin_session: Optional[str] = Header(default=None),
 ):
-    token = payload.token.strip().upper()
-    if token not in users:
-        raise HTTPException(status_code=404, detail="Unknown token")
-
-    is_admin = False
-    try:
-        _require_admin(x_admin_session)
-        is_admin = True
-    except HTTPException:
-        is_admin = False
-
-    with WIZARD_DB_LOCK:
-        db = _wizard_db()
-        existing = db.get(token, {})
-
-        if not is_admin:
-            _bind_wizard_client(existing, x_wizard_client)
-
-        row = _model_dump(payload)
-        row["token"] = token
-        row["updated_at"] = _now_iso()
-        row["client_secret_hash"] = existing.get("client_secret_hash")
-        if existing.get("client_bound_at"):
-            row["client_bound_at"] = existing.get("client_bound_at")
-        db[token] = row
-        _save_wizard_db(db)
-
-    audit("wizard_progress_saved", token=token, detail="Wizard profile/progress updated")
-    return {"status": "ok", "record": _public_wizard_record(row)}
+    who = _require_profile_admin(x_admin_session)
+    profile = {
+        "display_name": payload.display_name.strip(),
+        "iits_username": payload.iits_username.strip(),
+        "adm_username": payload.adm_username.strip(),
+        "iits_pw_date": payload.iits_pw_date.strip() if payload.iits_pw_date else None,
+        "adm_pw_date": payload.adm_pw_date.strip() if payload.adm_pw_date else None,
+        "vpn_date": payload.vpn_date.strip() if payload.vpn_date else None,
+    }
+    with ADMIN_PROFILES_LOCK:
+        db = _admin_profiles_db()
+        db[who] = profile
+        _write_json(ADMIN_PROFILES_FILE, db)
+    audit("admin_profile_saved", token=who, detail="Admin credential and expiry profile updated")
+    return {"token": who, **profile}
 
 
-@app.get("/wizard/progress/{token}")
-async def wizard_progress_get(
-    token: str,
-    x_wizard_client: Optional[str] = Header(default=None),
-    x_admin_session: Optional[str] = Header(default=None),
-):
-    token = token.strip().upper()
-    if token not in users:
-        raise HTTPException(status_code=404, detail="Unknown token")
+# -- Prometheus gauge callbacks ------------------------------------------------
+# The gauges defined near the top of this file are populated on demand via
+# set_function. The callbacks reference _use_redis_state, claim_queue, and
+# _redis_queue_tokens, which are all defined further up by this point.
 
-    is_admin = False
-    try:
-        _require_admin(x_admin_session)
-        is_admin = True
-    except HTTPException:
-        is_admin = False
-
-    with WIZARD_DB_LOCK:
-        db = _wizard_db()
-        row = db.get(token)
-
-        if not row:
-            row = _default_wizard_record(token)
-            if not is_admin:
-                _bind_wizard_client(row, x_wizard_client)
-                row["updated_at"] = _now_iso()
-                db[token] = row
-                _save_wizard_db(db)
-            return _public_wizard_record(row)
-
-        if not is_admin:
-            changed = _bind_wizard_client(row, x_wizard_client)
-            if changed:
-                row["updated_at"] = _now_iso()
-                db[token] = row
-                _save_wizard_db(db)
-
-        return _public_wizard_record(row)
+def _current_queue_depth() -> int:
+    """Returns the live queue depth, regardless of state backend."""
+    if _use_redis_state():
+        return len(_redis_queue_tokens())
+    return len(claim_queue)
 
 
-@app.get("/admin/wizard")
-async def admin_wizard(x_admin_session: Optional[str] = Header(default=None)):
-    _require_admin(x_admin_session)
-    db = _wizard_db()
-    merged = []
-    for token, user in sorted(users.items()):
-        rec = db.get(token, {})
-        merged.append({
-            "token": token,
-            "display_name": rec.get("display_name") or user.get("name", ""),
-            "email": user.get("email", ""),
-            "iits_username": rec.get("iits_username", ""),
-            "adm_username": rec.get("adm_username", ""),
-            "completed": rec.get("completed", []),
-            "adminCompleted": rec.get("adminCompleted", []),
-            "iits_pw_date": rec.get("iits_pw_date"),
-            "adm_pw_date": rec.get("adm_pw_date"),
-            "vpn_date": rec.get("vpn_date"),
-            "test_env": rec.get("test_env") or user.get("test_env", ""),
-            "prod_env": rec.get("prod_env") or user.get("prod_env", ""),
-            "updated_at": rec.get("updated_at"),
-        })
-    return {"users": merged}
-
-
-@app.post("/api/onboard/notify")
-async def onboard_notify(request: Request):
-    payload = await request.json()
-    token = str(payload.get("token", "") or "").strip().upper() or None
-    detail = json.dumps(payload, sort_keys=True)[:500]
-    audit("onboard_notify", token=token, detail=detail)
-    return {"status": "ok", "received": payload, "ts": _now_iso()}
-
-
-@app.get("/guide.html", include_in_schema=False)
-def serve_guide_html():
-    guide_path = FRONTEND_DIR / "guide.html"
-    if not guide_path.exists():
-        raise HTTPException(status_code=404, detail="guide.html not deployed")
-    return FileResponse(guide_path)
+otp_queue_depth.set_function(_current_queue_depth)
+otp_active_user.set_function(lambda: 1 if _current_queue_depth() > 0 else 0)
 
 
 # Serve frontend - must be last

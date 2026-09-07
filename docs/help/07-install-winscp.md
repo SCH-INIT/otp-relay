@@ -7,7 +7,6 @@ slug: install-winscp
 
 # Download and install WinSCP
 
-<!-- wizard:install_vpn -->
 ## WinSCP / SFTP setup
 
 Use WinSCP after VPN access is approved and connected.
@@ -22,4 +21,3 @@ Use WinSCP after VPN access is approved and connected.
    - Password: your RTA account password
 
 ![WinSCP login window with the required connection details](assets/winscp-login.png)
-<!-- /wizard -->

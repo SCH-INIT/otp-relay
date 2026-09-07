@@ -7,7 +7,6 @@ slug: install-rta-vpn
 
 # Download and install RTA VPN (Ivanti Secure Access Client)
 
-<!-- wizard:install_vpn -->
 ## Install Ivanti Secure Access Client
 
 1. Download and install the Ivanti VPN client.
@@ -21,9 +20,6 @@ slug: install-rta-vpn
 6. To connect, click **Connect**.
 
 ![Ivanti Secure Access Client add connection window](assets/ivanti-add-connection.png)
-<!-- /wizard -->
-
-<!-- wizard:install_vpn -->
 ## VPN authentication
 
 The RTA VPN uses multi-factor authentication.
@@ -32,4 +28,3 @@ The RTA VPN uses multi-factor authentication.
 - Second authentication: the 6-digit TOTP configured in Oracle Authenticator.
 
 Keep Oracle Authenticator available before testing VPN, PAM, or SFTP access.
-<!-- /wizard -->

@@ -86,15 +86,20 @@ docker save otp-relay:latest -o otp-relay-latest.tar
 docker save otp-monitor:latest -o otp-monitor-latest.tar
 ```
 
-### Step 6 - copy the files to the K3s node
+### Step 6 - copy the files to the storage worker node
+
+The image must be imported on the node that actually runs the pod. In this
+cluster that is `srvk3wrk01.local` (the worker labelled
+`otp-relay/storage=true`):
 
 ```bash
-scp otp-relay-latest.tar otp-monitor-latest.tar jathin@srvk3s01.init-db.lan:/tmp/
+scp otp-relay-latest.tar otp-monitor-latest.tar jathin@srvk3wrk01.local:/tmp/
 ```
 
-Replace `jathin` and the host name with the correct server login details.
+Replace `jathin` with the correct SSH login. If a different worker is ever
+chosen as the storage node, copy and import there instead.
 
-### Step 7 - import images on the server
+### Step 7 - import images on the storage worker
 
 ```bash
 sudo k3s ctr images import /tmp/otp-relay-latest.tar

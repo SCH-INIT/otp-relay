@@ -1,0 +1,130 @@
+# Helm values for Loki
+#
+# Chart source: grafana-community/loki (chart version 13.7.0 at time of writing)
+# Note: the chart moved from grafana/ to grafana-community/ in March 2026.
+#       This file targets the new chart.
+#
+# Deployment mode: Monolithic (single-binary). Correct for our scale.
+# Storage: local PVC, no object storage backend.
+# Retention: 7 days (per design doc)
+#
+# Design reference: docs/dev/observability-design.md
+
+# -----------------------------------------------------------------------------
+# Deployment topology
+# -----------------------------------------------------------------------------
+deploymentMode: Monolithic
+
+singleBinary:
+  replicas: 1
+
+  # Pin to data worker (alongside Prometheus)
+  nodeSelector:
+    observability/role: data
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 300m
+
+  # Persistence for chunks and index
+  persistence:
+    enabled: true
+    storageClass: local-path
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+
+# Disable microservices-mode components — we are not using them
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+ingester:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+distributor:
+  replicas: 0
+compactor:
+  replicas: 0
+indexGateway:
+  replicas: 0
+bloomCompactor:
+  replicas: 0
+bloomGateway:
+  replicas: 0
+
+# Don't deploy the chunks-cache and results-cache (memcached) sub-charts.
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# Disable the test pod the chart ships with
+test:
+  enabled: false
+
+# Disable the gateway (nginx in front of Loki). Grafana talks to Loki directly.
+gateway:
+  enabled: false
+
+# Disable loki-canary (synthetic-traffic generator for monitoring Loki itself).
+# Useful at scale; pointless at ours.
+lokiCanary:
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# Loki core configuration
+# -----------------------------------------------------------------------------
+loki:
+  # Single-tenant mode — no multi-tenancy
+  auth_enabled: false
+
+  commonConfig:
+    replication_factor: 1
+    path_prefix: /var/loki
+
+  storage:
+    type: filesystem
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+  # Retention: 7 days. The compactor enforces this.
+  limits_config:
+    retention_period: 168h        # 7 days
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+    working_directory: /var/loki/compactor
+
+  # Disable the bundled rules engine (we use Prometheus for alerts, not Loki)
+  rulerConfig:
+    enable_api: false
+
+  # Don't register an analytics callback to Grafana Labs
+  analytics:
+    reporting_enabled: false

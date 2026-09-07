@@ -8,7 +8,7 @@ can change it confidently.
 
 ## Multi-stage build
 
-The `Dockerfile` uses two stages: `builder` and `runtime`.
+The `Dockerfile` uses three stages: `frontend`, `builder`, and `runtime`.
 
 **Why:** The builder stage installs pip packages, which pulls in compilers,
 headers, and other build tools that are not needed at runtime. By copying only
@@ -17,12 +17,13 @@ of that build tooling. The result is a smaller image and a smaller attack
 surface.
 
 ```
-Stage 1 (builder)   →   installs packages, builds venv
-Stage 2 (runtime)   →   copies venv + app, runs uvicorn
+Stage 1 (frontend)  →   compiles the React JSX bundle
+Stage 2 (builder)   →   installs Python packages, builds venv
+Stage 3 (runtime)   →   copies venv + app, runs uvicorn
 ```
 
-Only the `runtime` stage becomes the final image. The `builder` stage is
-discarded after the build.
+Only the `runtime` stage becomes the final image. The frontend and Python
+builder stages are discarded after the build.
 
 ---
 
@@ -62,7 +63,8 @@ because pip install needs it.
 RUN mkdir -p /app/data && chown otprelay:otprelay /app/data
 ```
 
-The `data/` directory holds `users.xlsx` and `audit.log`. These files must
+The `data/` directory holds `users.xlsx`, `audit.log`, `admin_auth.json`,
+`admin_config.json`, and `admin_profiles.json`. These files must
 survive container restarts — they live on a `PersistentVolumeClaim` that
 Kubernetes mounts at `/app/data` when the pod starts.
 
@@ -170,6 +172,9 @@ This constraint is resolved in Phase 2 when the queue moves to Redis.
 | `.env` file | Secrets come from Kubernetes `Secret` and `ConfigMap` objects, not from a file baked into the image |
 | `data/users.xlsx` | Lives on the `PersistentVolumeClaim`, not in the image |
 | `data/audit.log` | Same as above |
+| `data/admin_auth.json` | Same as above; contains persisted admin PIN hashes |
+| `data/admin_config.json` | Same as above; contains the configured admin-token set |
+| `data/admin_profiles.json` | Same as above; contains admin-only usernames and password/VPN renewal dates, never actual account passwords |
 | `venv/` source | Rebuilt cleanly during `docker build` — never copy a local venv into an image |
 | `monitor.py` | Separate process, runs in its own pod (`Dockerfile.monitor`) |
 | `nginx/` | TLS termination is the ingress controller's job, not the app container's |

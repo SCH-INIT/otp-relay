@@ -26,8 +26,8 @@ set -Eeuo pipefail
 #   PORTAL_URL=http://server-or-dns-name
 #   WHATSAPP_API_KEY=...
 #   WHATSAPP_RECIPIENT=...
-#   RUNTIME_DATA_DIR=/path/with/users.xlsx/admin_auth.json/admin_config.json/wizard_progress.json
-#   SKIP_HELP_DOCS_BUILD=0|1
+#   RUNTIME_DATA_DIR=/path/with/users.xlsx/audit.log/admin_auth.json/admin_config.json/admin_profiles.json
+#   # Legacy wizard_progress.json is also copied when present, for profile migration only.
 #   GIT_CLEAN=1|0
 #   INSTALL_GITHUB_RUNNER=0|1
 #   GITHUB_RUNNER_URL=https://github.com/psi1703/k8s
@@ -71,7 +71,6 @@ ALERT_LEVEL="${ALERT_LEVEL:-error}"
 WHATSAPP_API_KEY="${WHATSAPP_API_KEY:-}"
 WHATSAPP_RECIPIENT="${WHATSAPP_RECIPIENT:-}"
 RUNTIME_DATA_DIR="${RUNTIME_DATA_DIR:-}"
-SKIP_HELP_DOCS_BUILD="${SKIP_HELP_DOCS_BUILD:-0}"
 GIT_CLEAN="${GIT_CLEAN:-1}"
 NONINTERACTIVE="${NONINTERACTIVE:-0}"
 INSTALL_GITHUB_RUNNER="${INSTALL_GITHUB_RUNNER:-}"
@@ -379,30 +378,12 @@ log "checking required source files"
 [ -f frontend/index.html ] || fatal "frontend/index.html is missing"
 [ -f frontend/app.jsx ] || fatal "frontend/app.jsx is missing"
 [ -f frontend/style.css ] || fatal "frontend/style.css is missing"
-[ -f scripts/build_help_docs.py ] || fatal "required help-doc builder is missing: scripts/build_help_docs.py"
-[ -d docs/help ] || fatal "required help-doc input directory is missing: docs/help"
 
 if [ -z "$PHONE_IP" ]; then
   fatal "PHONE_IP is required because monitor.py is a core component"
 fi
 if [ -z "$WHATSAPP_API_KEY" ] || [ -z "$WHATSAPP_RECIPIENT" ]; then
   warn "WhatsApp alert credentials are not set. monitor.py will still run, but WhatsApp alerts will be skipped."
-fi
-
-if requires_app_image; then
-  log "preparing installer Python environment for app validation/help docs"
-  python3 -m venv .installer-venv
-  .installer-venv/bin/python -m pip install --upgrade pip setuptools wheel
-  .installer-venv/bin/python -m pip install -r requirements.txt
-
-  if [ "$SKIP_HELP_DOCS_BUILD" = "1" ]; then
-    log "skipping help docs build because SKIP_HELP_DOCS_BUILD=1"
-  else
-    log "building help docs with scripts/build_help_docs.py"
-    .installer-venv/bin/python scripts/build_help_docs.py
-  fi
-else
-  log "DEPLOY_MODE=$DEPLOY_MODE does not require app help-doc build; skipping installer venv"
 fi
 
 log "writing Debian/K3s Docker and Kubernetes assets"
@@ -419,7 +400,6 @@ RUN useradd --system --uid 999 --no-create-home --shell /usr/sbin/nologin otprel
   && chown -R otprelay:otprelay /app
 COPY main.py .
 COPY frontend/ ./frontend/
-COPY docs/ ./docs/
 USER otprelay
 ENV OTP_RELAY_DATA_DIR=/app/data \
     USERS_EXCEL_PATH=/app/data/users.xlsx \
@@ -773,7 +753,9 @@ fi
 if [ -n "$RUNTIME_DATA_DIR" ] && { [ "$DEPLOY_MODE" = "full" ] || [ "$DEPLOY_MODE" = "app" ]; }; then
   [ -d "$RUNTIME_DATA_DIR" ] || fatal "RUNTIME_DATA_DIR does not exist: $RUNTIME_DATA_DIR"
   pod="$(k3s kubectl get pod -n "$NAMESPACE" -l app=otp-relay -o jsonpath='{.items[0].metadata.name}')"
-  for f in users.xlsx admin_auth.json admin_config.json wizard_progress.json audit.log; do
+  # wizard_progress.json is copied only as a non-destructive legacy migration
+  # source. The application owns migration into admin_profiles.json.
+  for f in users.xlsx audit.log admin_auth.json admin_config.json admin_profiles.json wizard_progress.json; do
     if [ -f "$RUNTIME_DATA_DIR/$f" ]; then
       log "copying $f into PVC"
       k3s kubectl cp "$RUNTIME_DATA_DIR/$f" "$NAMESPACE/$pod:/app/data/$f" -n "$NAMESPACE"

@@ -2,7 +2,17 @@
 
 **For:** Jathin
 **Level:** Beginner — every command is explained
-**Server:** `srvk3s01.init-db.lan` — `172.31.9.10`
+**Cluster:** K3s, three nodes on the company LAN
+
+| Role | Hostname | Notes |
+|---|---|---|
+| Master | `srvk3mst01.local` | Run `kubectl` here |
+| Worker | `srvk3wrk01.local` | Labelled as the storage node; runs the app and monitor pods |
+| Worker | `srvk3wrk02.local` | Available for other workloads |
+
+The `.local` hostnames are only resolvable inside the cluster network. The
+public-facing service is reached through `srvotp26.init-db.lan`, which is a
+MetalLB IP advertised on the company LAN.
 
 This guide walks you through deploying the OTP Relay application on your K3s
 cluster, and operating it day to day. No prior Kubernetes experience assumed.
@@ -32,8 +42,8 @@ that the app reads at startup.
 tokens. Kubernetes stores these separately and handles them more carefully.
 
 **PersistentVolumeClaim (PVC)** — a request for disk space. The app needs
-somewhere to store the user list and audit log that survives pod restarts. The
-PVC provides that.
+somewhere to store the user list, audit log, admin authentication/configuration,
+and admin profiles across pod restarts. The PVC provides that.
 
 **Namespace** — a way to group related resources together and keep them
 separate from other things running on the cluster. All OTP Relay resources live
@@ -45,9 +55,10 @@ in the `otp-relay` namespace.
 
 Before following this guide, you need:
 
-- [ ] K3s installed and running on `srvk3s01.init-db.lan`
-- [ ] MetalLB installed and configured with a LAN IP range
-- [ ] `kubectl` available on the server (K3s includes this automatically)
+- [ ] K3s installed with `--disable=servicelb`, and MetalLB installed and
+      configured with a LAN IP range. See `k3s-cluster-bootstrap.md` if you
+      don't have this yet.
+- [ ] `kubectl` available on the master node (K3s includes this automatically)
 - [ ] The repo cloned on the server — or at minimum the `k8s/manifests/`
       folder copied across
 - [ ] The `secret.env` file created with the real token value (Christian
@@ -156,14 +167,16 @@ kubectl get secret otp-relay-secrets -n otp-relay
 ### 1.5 — label the storage node
 
 Both the app and the monitor share a volume (PVC) that can only be mounted on
-one node at a time. Pick a worker node and label it so both pods land there:
+one node at a time. We label one worker node so both pods always land on it:
 
 ```bash
 kubectl label node srvk3wrk01 otp-relay/storage=true
 ```
 
-Replace `srvk3wrk01` with whichever worker node you want to use. You can check
-your node names with `kubectl get nodes`.
+`srvk3wrk01` is the chosen storage node in this cluster. If you ever need to
+change which worker hosts the OTP Relay pods, remove the label from the old
+node first, then label the new one. Check your node names with
+`kubectl get nodes`.
 
 ---
 
@@ -287,8 +300,14 @@ before stopping the old one.
 
 ### Uploading a new users.xlsx
 
+Sign in with an admin token and PIN, open the admin portal, select the **Users**
+tab, and use its upload control. The portal validates the workbook before it
+replaces the active list. If validation fails, the current user list stays in
+place. Confirm that the table shows Token, Name, and Email for the imported
+users.
+
 The `users.xlsx` file lives on the PersistentVolumeClaim mounted at
-`/app/data/` inside the pod. Copy a new file in with:
+`/app/data/` inside the pod. For a command-line fallback, copy a new file in:
 
 ```bash
 kubectl cp users.xlsx otp-relay/<pod-name>:/app/data/users.xlsx
@@ -296,12 +315,29 @@ kubectl cp users.xlsx otp-relay/<pod-name>:/app/data/users.xlsx
 
 Replace `<pod-name>` with the actual pod name from `kubectl get pods -n otp-relay`.
 
-Then reload the user list without restarting:
+Then use the authenticated **Reload users** action in the Users tab. Direct
+requests to the reload endpoint require an active admin session.
 
-```bash
-kubectl exec -n otp-relay deployment/otp-relay -- \
-  wget -qO- --method=POST http://localhost:8000/admin/reload-users
-```
+### Admin persistence and OTP operations
+
+Keep these files on the PVC and include them in backups:
+
+- `admin_auth.json` — admin PIN hashes
+- `admin_config.json` — configured admin tokens
+- `admin_profiles.json` — admin usernames and password/VPN renewal dates; never actual account passwords
+- `users.xlsx` — imported OTP users
+- `audit.log` — OTP and administration audit events (never OTP values)
+
+The OTP page displays credential and expiry cards only for an authenticated
+admin. The admin portal retains PIN setup/reset, admin settings, XLSX upload and
+reload, live queue visibility, and filtered audit logs. Check the live queue and
+audit entries after updates to make sure OTP claim, wait, expiry, cancellation,
+rejection, and delivery events remain visible.
+
+After upgrading from a version with the former onboarding feature, leave
+`wizard_progress.json` on the PVC until the retained admin fields have been
+migrated into `admin_profiles.json` and verified. The installer copies the
+legacy file when supplied but never deletes it.
 
 ### Checking resource usage
 
@@ -364,10 +400,11 @@ If `EXTERNAL-IP` shows `<pending>`, MetalLB has not assigned an IP yet —
 see above. If there is an IP, try curling it directly:
 
 ```bash
-curl http://<external-ip>/admin/queue
+curl http://<external-ip>/readyz
 ```
 
-If that returns JSON, the app is fine and the issue is the browser or network.
+If that returns a ready response, the app is fine and the issue is the browser
+or network. Admin queue and log endpoints require a signed-in admin session.
 
 ---
 
