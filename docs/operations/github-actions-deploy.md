@@ -14,7 +14,7 @@ This avoids Docker Hub, a private registry, SSH file copy, and manual image tar 
 git push to main
   -> GitHub Actions job starts
   -> self-hosted runner on the K3s server checks out the repo
-  -> installer syncs /opt/otp-relay-k8s to origin/main
+  -> installer syncs /opt/otp-relay to origin/main
   -> installer builds otp-relay:latest and otp-monitor:latest
   -> installer imports both images into K3s
   -> installer applies manifests and waits for rollouts
@@ -36,7 +36,7 @@ Then run this once on the K3s server. Runner setup happens first, before Docker 
 
 ```bash
 sudo INSTALL_GITHUB_RUNNER=1 \
-  GITHUB_RUNNER_URL="https://github.com/psi1703/k8s" \
+  GITHUB_RUNNER_URL="https://github.com/SCH-INIT/otp-relay" \
   GITHUB_RUNNER_TOKEN="PASTE_RUNNER_TOKEN_HERE" \
   PHONE_IP="172.31.10.161" \
   PHONE_INTERFACE="eth0" \
@@ -44,7 +44,7 @@ sudo INSTALL_GITHUB_RUNNER=1 \
   WHATSAPP_RECIPIENT="PASTE_WHATSAPP_RECIPIENT_HERE" \
   PORTAL_URL="http://SERVER_IP_OR_DNS" \
   NONINTERACTIVE=1 \
-  bash install-otp-relay-k8s.sh
+  bash install-otp-relay.sh
 ```
 
 The installer does not assign a custom runner name or custom labels. GitHub's default runner name and default labels are used.
@@ -121,7 +121,7 @@ It runs on:
 The workflow command is intentionally narrow:
 
 ```bash
-sudo -E /usr/bin/bash /opt/otp-relay-k8s/install-otp-relay-k8s.sh
+sudo -E /usr/bin/bash /opt/otp-relay/install-otp-relay-k8s.sh
 ```
 
 During runner bootstrap, the installer creates a restricted sudoers rule allowing the runner user to execute only that installer command with environment preservation.
