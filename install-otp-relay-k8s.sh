@@ -9,9 +9,9 @@ set -Eeuo pipefail
 #   sudo bash install-otp-relay-k8s.sh
 #
 # Useful env vars:
-#   REPO_URL=https://github.com/psi1703/k8s.git
+#   REPO_URL=https://github.com/SCH-INIT/otp-relay.git
 #   REPO_REF=main
-#   INSTALL_DIR=/opt/otp-relay-k8s
+#   INSTALL_DIR=/opt/otp-relay
 #   NAMESPACE=otp-relay
 #   APP_IMAGE=otp-relay:latest
 #   MONITOR_IMAGE=otp-monitor:latest
@@ -30,16 +30,16 @@ set -Eeuo pipefail
 #   # Legacy wizard_progress.json is also copied when present, for profile migration only.
 #   GIT_CLEAN=1|0
 #   INSTALL_GITHUB_RUNNER=0|1
-#   GITHUB_RUNNER_URL=https://github.com/psi1703/k8s
+#   GITHUB_RUNNER_URL=https://github.com/SCH-INIT/otp-relay
 #   GITHUB_RUNNER_TOKEN=...
 #   GITHUB_RUNNER_DIR=/opt/actions-runner
 #   RUNNER_ONLY=0|1
 #   DEPLOY_MODE=full|app|monitor|manifests|none
 #   NONINTERACTIVE=0|1
 
-log() { printf '[otp-relay-k8s] %s\n' "$*"; }
-warn() { printf '[otp-relay-k8s] WARNING: %s\n' "$*" >&2; }
-fatal() { printf '[otp-relay-k8s] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[otp-relay] %s\n' "$*"; }
+warn() { printf '[otp-relay] WARNING: %s\n' "$*" >&2; }
+fatal() { printf '[otp-relay] ERROR: %s\n' "$*" >&2; exit 1; }
 cmd_exists() { command -v "$1" >/dev/null 2>&1; }
 need_root() { [ "$(id -u)" -eq 0 ] || fatal "run as root: sudo bash $0"; }
 
@@ -47,9 +47,9 @@ need_root
 export DEBIAN_FRONTEND=noninteractive
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
-REPO_URL="${REPO_URL:-https://github.com/psi1703/k8s.git}"
+REPO_URL="${REPO_URL:-https://github.com/SCH-INIT/otp-relay.git}"
 REPO_REF="${REPO_REF:-main}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/otp-relay-k8s}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/otp-relay}"
 NAMESPACE="${NAMESPACE:-otp-relay}"
 APP_IMAGE="${APP_IMAGE:-otp-relay:latest}"
 MONITOR_IMAGE="${MONITOR_IMAGE:-otp-monitor:latest}"
@@ -145,10 +145,10 @@ write_runner_sudoers() {
   sudoers_file="/etc/sudoers.d/otp-relay-actions-runner"
   log "granting $GITHUB_RUNNER_USER narrow passwordless sudo for the OTP Relay installer"
   cat > "$sudoers_file" <<EOF_SUDOERS
-$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /bin/bash $INSTALL_DIR/install-otp-relay-k8s.sh
-$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /usr/bin/bash $INSTALL_DIR/install-otp-relay-k8s.sh
-$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /bin/bash $GITHUB_RUNNER_DIR/_work/*/*/install-otp-relay-k8s.sh
-$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /usr/bin/bash $GITHUB_RUNNER_DIR/_work/*/*/install-otp-relay-k8s.sh
+$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /bin/bash $INSTALL_DIR/install-otp-relay.sh
+$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /usr/bin/bash $INSTALL_DIR/install-otp-relay.sh
+$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /bin/bash $GITHUB_RUNNER_DIR/_work/*/*/install-otp-relay.sh
+$GITHUB_RUNNER_USER ALL=(root) NOPASSWD:SETENV: /usr/bin/bash $GITHUB_RUNNER_DIR/_work/*/*/install-otp-relay.sh
 EOF_SUDOERS
   chmod 0440 "$sudoers_file"
   visudo -cf "$sudoers_file" >/dev/null
@@ -286,11 +286,11 @@ if systemctl is-active --quiet k3s 2>/dev/null; then
   log "K3s is already running; installer will not restart it"
 fi
 
-mkdir -p /var/backups/otp-relay-k8s
-ip route > /var/backups/otp-relay-k8s/ip-route.before 2>/dev/null || true
-ip addr > /var/backups/otp-relay-k8s/ip-addr.before 2>/dev/null || true
-iptables-save > /var/backups/otp-relay-k8s/iptables.before 2>/dev/null || true
-nft list ruleset > /var/backups/otp-relay-k8s/nft.before 2>/dev/null || true
+mkdir -p /var/backups/otp-relay
+ip route > /var/backups/otp-relay/ip-route.before 2>/dev/null || true
+ip addr > /var/backups/otp-relay/ip-addr.before 2>/dev/null || true
+iptables-save > /var/backups/otp-relay/iptables.before 2>/dev/null || true
+nft list ruleset > /var/backups/otp-relay/nft.before 2>/dev/null || true
 
 if [ "$IS_RPI" = "1" ]; then
   if ! grep -qw cgroup_memory /proc/cmdline 2>/dev/null || ! grep -qw cgroup_enable=memory /proc/cmdline 2>/dev/null; then
